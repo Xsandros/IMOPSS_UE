@@ -1,0 +1,32 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1",
+  "FriendlyName": "IMOP Spell System",
+  "Description": "Runtime + Editor tooling for IMOP spell system",
+  "Category": "Gameplay",
+  "EnabledByDefault": true,
+  "CanContainContent": true,
+  "Plugins": [
+    { "Name": "StructUtils", "Enabled": true }
+  ],
+
+  "Modules": [
+    {
+      "Name": "IMOPSpellSystemRuntime",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "IMOPSpellSystemEditor",
+      "Type": "Editor",
+      "LoadingPhase": "Default"
+    },
+    {
+      "Name": "IMOPSpellSystemDev",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+
+  ]
+}

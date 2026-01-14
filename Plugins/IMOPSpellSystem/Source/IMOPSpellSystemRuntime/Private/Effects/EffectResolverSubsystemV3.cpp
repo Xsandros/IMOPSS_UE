@@ -1,5 +1,7 @@
 #include "Effects/EffectResolverSubsystemV3.h"
 #include "Effects/EffectResolverV3.h"
+#include "Actions/SpellActionExecutorV3.h"
+
 
 void UEffectResolverSubsystemV3::SetMitigationProvider(TScriptInterface<IEffectMitigationProviderV3> InProvider)
 {

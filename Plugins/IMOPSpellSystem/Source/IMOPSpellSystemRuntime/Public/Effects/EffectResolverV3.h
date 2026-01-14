@@ -4,6 +4,8 @@
 #include "Effects/EffectSpecV3.h"
 #include "Effects/EffectResultV3.h"
 #include "Runtime/SpellRuntimeV3.h"
+#include "Actions/SpellPayloadsCoreV3.h"
+
 
 struct IMOPSPELLSYSTEMRUNTIME_API FEffectResolverV3
 {

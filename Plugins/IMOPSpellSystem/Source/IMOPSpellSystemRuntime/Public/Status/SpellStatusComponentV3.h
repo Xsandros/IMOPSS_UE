@@ -4,6 +4,7 @@
 #include "Components/ActorComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "Status/SpellStatusTypesV3.h"
+#include "Status/SpellStatusDefinitionV3.h"
 #include "SpellStatusComponentV3.generated.h"
 
 UCLASS(ClassGroup=(IMOP), meta=(BlueprintSpawnableComponent))

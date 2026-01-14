@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "UObject/Interface.h"
 #include "GameplayTagContainer.h"
-#include "Attributes/AttributeProviderV3.generated.h"
+#include "AttributeProviderV3.generated.h"
 
 USTRUCT(BlueprintType)
 struct FAttributeKeyV3

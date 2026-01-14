@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "Tickable.h"
 #include "Status/SpellStatusDefinitionV3.h"
 #include "Status/SpellStatusTypesV3.h"
 #include "Runtime/SpellRuntimeV3.h"
@@ -10,15 +10,23 @@
 class USpellStatusComponentV3;
 
 UCLASS()
-class IMOPSPELLSYSTEMRUNTIME_API USpellStatusSubsystemV3 : public UWorldSubsystem
+class IMOPSPELLSYSTEMRUNTIME_API USpellStatusSubsystemV3 
+	: public UWorldSubsystem
+	, public FTickableGameObject
 {
 	GENERATED_BODY()
 
 public:
+	// ===== FTickableGameObject =====
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool IsTickable() const override { return true; }
-	virtual TStatId GetStatId() const override { RETURN_QUICK_DECLARE_CYCLE_STAT(USpellStatusSubsystemV3, STATGROUP_Tickables); }
+	virtual bool IsTickableWhenPaused() const override { return false; }
+	virtual TStatId GetStatId() const override
+	{
+		RETURN_QUICK_DECLARE_CYCLE_STAT(USpellStatusSubsystemV3, STATGROUP_Tickables);
+	}
 
+	// ===== Status API =====
 	bool ApplyStatus(
 		const FSpellExecContextV3& ExecCtx,
 		AActor* Target,
@@ -38,3 +46,4 @@ public:
 private:
 	void HandleExpiry(AActor* Target, const FActiveStatusV3& Status);
 };
+

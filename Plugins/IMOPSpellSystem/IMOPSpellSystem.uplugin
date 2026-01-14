@@ -8,7 +8,8 @@
   "EnabledByDefault": true,
   "CanContainContent": true,
   "Plugins": [
-    { "Name": "StructUtils", "Enabled": true }
+    { "Name": "StructUtils", "Enabled": true },
+    { "Name": "EnhancedInput", "Enabled": true}
   ],
 
   "Modules": [

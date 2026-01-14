@@ -10,14 +10,18 @@
 #include "Components/PrimitiveComponent.h"
 #include "Stores/SpellVariableStoreV3.h"
 
+// ===== local helpers =====
 static UAttributeSubsystemV3* GetAttrSubsystem(const FSpellExecContextV3& Ctx)
 {
 	if (!Ctx.WorldContext) return nullptr;
-	if (UGameInstance* GI = Ctx.WorldContext->GetGameInstance())
-	{
-		return GI->GetSubsystem<UAttributeSubsystemV3>();
-	}
-	return nullptr;
+
+	UWorld* W = Ctx.WorldContext->GetWorld();
+	if (!W) return nullptr;
+
+	UGameInstance* GI = W->GetGameInstance();
+	if (!GI) return nullptr;
+
+	return GI->GetSubsystem<UAttributeSubsystemV3>();
 }
 
 static float ComputeResistanceFallback(AActor* Target, const FEffectSpecV3& Spec)

@@ -5,6 +5,21 @@
 #include "Stores/SpellTargetStoreV3.h"
 #include "Stores/SpellVariableStoreV3.h"
 
+static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
+{
+	return Ctx.WorldContext ? Ctx.WorldContext->GetWorld() : nullptr;
+}
+
+static UGameInstance* GetGIFromExecCtx(const FSpellExecContextV3& Ctx)
+{
+	if (UWorld* W = GetWorldFromExecCtx(Ctx))
+	{
+		return W->GetGameInstance();
+	}
+	return nullptr;
+}
+
+
 const UScriptStruct* UExec_ReadAttributeV3::GetPayloadStruct() const
 {
 	return FPayload_ReadAttributeV3::StaticStruct();
@@ -16,9 +31,9 @@ void UExec_ReadAttributeV3::Execute(const FSpellExecContextV3& Ctx, const void* 
 	if (!P || !Ctx.TargetStore || !Ctx.VariableStore || !Ctx.WorldContext) return;
 
 	FTargetSetV3 Set;
-	if (!Ctx.TargetStore->TryGet(P->TargetSet, Set)) return;
+	if (!Ctx.TargetStore->Get(P->TargetSet, Set)) return;
 
-	UGameInstance* GI = Ctx.WorldContext->GetGameInstance();
+	UGameInstance* GI = GetGIFromExecCtx(Ctx);
 	if (!GI) return;
 
 	UAttributeSubsystemV3* Attr = GI->GetSubsystem<UAttributeSubsystemV3>();

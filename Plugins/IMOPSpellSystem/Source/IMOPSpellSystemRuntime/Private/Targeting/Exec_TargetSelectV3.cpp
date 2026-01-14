@@ -14,20 +14,14 @@ DEFINE_LOG_CATEGORY_STATIC(LogIMOPExecTargetSelectV3, Log, All);
 
 static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
 {
-    if (Ctx.Runtime)
+    return Ctx.WorldContext ? Ctx.WorldContext->GetWorld() : nullptr;
+}
+
+static UGameInstance* GetGIFromExecCtx(const FSpellExecContextV3& Ctx)
+{
+    if (UWorld* W = GetWorldFromExecCtx(Ctx))
     {
-        return Ctx.Runtime->GetWorld();
-    }
-    if (Ctx.Caster)
-    {
-        return Ctx.Caster->GetWorld();
-    }
-    if (Ctx.WorldContext)
-    {
-        if (GEngine)
-        {
-            return GEngine->GetWorldFromContextObject(Ctx.WorldContext, EGetWorldErrorMode::ReturnNull);
-        }
+        return W->GetGameInstance();
     }
     return nullptr;
 }

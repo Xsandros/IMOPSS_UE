@@ -4,6 +4,21 @@
 #include "Status/SpellStatusSubsystemV3.h"
 #include "Stores/SpellTargetStoreV3.h"
 
+static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
+{
+	return Ctx.WorldContext ? Ctx.WorldContext->GetWorld() : nullptr;
+}
+
+static UGameInstance* GetGIFromExecCtx(const FSpellExecContextV3& Ctx)
+{
+	if (UWorld* W = GetWorldFromExecCtx(Ctx))
+	{
+		return W->GetGameInstance();
+	}
+	return nullptr;
+}
+
+
 const UScriptStruct* UExec_ApplyStatusV3::GetPayloadStruct() const
 {
 	return FPayload_ApplyStatusV3::StaticStruct();
@@ -17,9 +32,10 @@ void UExec_ApplyStatusV3::Execute(const FSpellExecContextV3& Ctx, const void* Pa
 	if (!Ctx.bAuthority) return;
 
 	FTargetSetV3 Set;
-	if (!Ctx.TargetStore->TryGet(P->TargetSet, Set)) return;
+	if (!Ctx.TargetStore->Get(P->TargetSet, Set)) return;
 
-	USpellStatusSubsystemV3* Status = Ctx.WorldContext->GetSubsystem<USpellStatusSubsystemV3>();
+	UWorld* W = GetWorldFromExecCtx(Ctx);
+	USpellStatusSubsystemV3* Status = W ? W->GetSubsystem<USpellStatusSubsystemV3>() : nullptr;
 	if (!Status) return;
 
 	FEffectContextV3 AppliedCtx;

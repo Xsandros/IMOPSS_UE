@@ -7,6 +7,9 @@
 #include "Effects/EffectResultV3.h"
 #include "EffectResolverSubsystemV3.generated.h"
 
+struct FSpellExecContextV3;
+
+
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UEffectResolverSubsystemV3 : public UGameInstanceSubsystem
 {

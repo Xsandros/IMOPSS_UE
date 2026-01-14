@@ -1,23 +1,9 @@
 #include "Effects/Exec_ApplyForceV3.h"
+#include "Core/SpellExecContextHelpersV3.h"
 
 #include "Effects/SpellPayloadsEffectsV3.h"
 #include "Effects/EffectResolverSubsystemV3.h"
 #include "Stores/SpellTargetStoreV3.h"
-
-static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-	return Ctx.WorldContext ? Ctx.WorldContext->GetWorld() : nullptr;
-}
-
-static UGameInstance* GetGIFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-	if (UWorld* W = GetWorldFromExecCtx(Ctx))
-	{
-		return W->GetGameInstance();
-	}
-	return nullptr;
-}
-
 
 const UScriptStruct* UExec_ApplyForceV3::GetPayloadStruct() const
 {
@@ -38,7 +24,7 @@ void UExec_ApplyForceV3::Execute(const FSpellExecContextV3& Ctx, const void* Pay
 	Targets.Reserve(Set.Targets.Num());
 	for (const FTargetRefV3& R : Set.Targets) Targets.Add(R.Actor);
 
-	if (UGameInstance* GI = GetGIFromExecCtx(Ctx))
+	if (UGameInstance* GI = IMOP_GetGIFromExecCtx(Ctx))
 	{
 		if (!GI) return;
 		if (UEffectResolverSubsystemV3* Res = GI->GetSubsystem<UEffectResolverSubsystemV3>())

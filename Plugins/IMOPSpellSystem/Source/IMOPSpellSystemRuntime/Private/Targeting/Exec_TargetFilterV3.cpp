@@ -6,6 +6,7 @@
 
 #include "Stores/SpellTargetStoreV3.h"
 #include "Runtime/SpellRuntimeV3.h"
+#include "Core/SpellExecContextHelpersV3.h"
 
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -13,19 +14,7 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPExecTargetFilterV3, Log, All);
 
-static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-    return Ctx.WorldContext ? Ctx.WorldContext->GetWorld() : nullptr;
-}
 
-static UGameInstance* GetGIFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-    if (UWorld* W = GetWorldFromExecCtx(Ctx))
-    {
-        return W->GetGameInstance();
-    }
-    return nullptr;
-}
 
 const UScriptStruct* UExec_TargetFilterV3::GetPayloadStruct() const
 {
@@ -53,8 +42,8 @@ void UExec_TargetFilterV3::Execute(const FSpellExecContextV3& Ctx, const void* P
         return;
     }
 
-    UWorld* World = GetWorldFromExecCtx(Ctx);
-    if (!World)
+    UWorld* W = IMOP_GetWorldFromExecCtx(Ctx);
+    if (!W)
     {
         UE_LOG(LogIMOPExecTargetFilterV3, Error, TEXT("TargetFilter: World missing."));
         return;
@@ -67,7 +56,7 @@ void UExec_TargetFilterV3::Execute(const FSpellExecContextV3& Ctx, const void* P
     Candidates.RemoveAll([](const FTargetRefV3& R){ return !R.IsValid(); });
 
     // Get hooks
-    UTargetingSubsystemV3* Sub = World ? World->GetSubsystem<UTargetingSubsystemV3>() : nullptr;
+    UTargetingSubsystemV3* Sub = W ? W->GetSubsystem<UTargetingSubsystemV3>() : nullptr;
     UObject* HooksObj = Sub ? Sub->GetGameHooksObject() : nullptr;
 
     ITargetingGameHooksV3* Hooks = HooksObj ? Cast<ITargetingGameHooksV3>(HooksObj) : nullptr;

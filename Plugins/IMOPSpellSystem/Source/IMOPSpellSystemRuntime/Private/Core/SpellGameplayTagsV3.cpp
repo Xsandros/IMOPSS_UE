@@ -34,6 +34,14 @@ void FIMOPSpellGameplayTagsV3::Initialize()
 	Action_Targeting_Filter  = RequestTagChecked(TEXT("Spell.Action.Targeting.Filter"));
 	Action_Targeting_Select  = RequestTagChecked(TEXT("Spell.Action.Targeting.Select"));
 
+	Action_Effect_ModifyAttribute = RequestTagChecked(TEXT("Spell.Action.Effect.ModifyAttribute"));
+	Action_Effect_ReadAttribute   = RequestTagChecked(TEXT("Spell.Action.Effect.ReadAttribute"));
+	Action_Effect_ApplyForce      = RequestTagChecked(TEXT("Spell.Action.Effect.ApplyForce"));
+
+	Action_Status_Apply           = RequestTagChecked(TEXT("Spell.Action.Status.Apply"));
+	Action_Status_Remove          = RequestTagChecked(TEXT("Spell.Action.Status.Remove"));
+
+	
 
 	Event_Spell_Start = RequestTagChecked(TEXT("Spell.Event.Spell.Start"));
 	Event_Spell_End = RequestTagChecked(TEXT("Spell.Event.Spell.End"));

@@ -1,24 +1,10 @@
 #include "Effects/Exec_ReadAttributeV3.h"
+#include "Core/SpellExecContextHelpersV3.h"
 
 #include "Effects/SpellPayloadsEffectsV3.h"
 #include "Attributes/AttributeSubsystemV3.h"
 #include "Stores/SpellTargetStoreV3.h"
 #include "Stores/SpellVariableStoreV3.h"
-
-static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-	return Ctx.WorldContext ? Ctx.WorldContext->GetWorld() : nullptr;
-}
-
-static UGameInstance* GetGIFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-	if (UWorld* W = GetWorldFromExecCtx(Ctx))
-	{
-		return W->GetGameInstance();
-	}
-	return nullptr;
-}
-
 
 const UScriptStruct* UExec_ReadAttributeV3::GetPayloadStruct() const
 {
@@ -33,7 +19,7 @@ void UExec_ReadAttributeV3::Execute(const FSpellExecContextV3& Ctx, const void* 
 	FTargetSetV3 Set;
 	if (!Ctx.TargetStore->Get(P->TargetSet, Set)) return;
 
-	UGameInstance* GI = GetGIFromExecCtx(Ctx);
+	UGameInstance* GI = IMOP_GetGIFromExecCtx(Ctx);
 	if (!GI) return;
 
 	UAttributeSubsystemV3* Attr = GI->GetSubsystem<UAttributeSubsystemV3>();

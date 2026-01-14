@@ -1,4 +1,5 @@
 #include "Targeting/Exec_TargetAcquireV3.h"
+#include "Core/SpellExecContextHelpersV3.h"
 
 #include "Targeting/SpellPayloadsTargetingV3.h"
 #include "Targeting/TargetingSubsystemV3.h"
@@ -10,26 +11,6 @@
 #include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPExecTargetAcquireV3, Log, All);
-
-static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-    if (Ctx.Runtime)
-    {
-        return Ctx.Runtime->GetWorld();
-    }
-    if (Ctx.Caster)
-    {
-        return Ctx.Caster->GetWorld();
-    }
-    if (Ctx.WorldContext)
-    {
-        if (GEngine)
-        {
-            return GEngine->GetWorldFromContextObject(Ctx.WorldContext, EGetWorldErrorMode::ReturnNull);
-        }
-    }
-    return nullptr;
-}
 
 const UScriptStruct* UExec_TargetAcquireV3::GetPayloadStruct() const
 {
@@ -50,14 +31,15 @@ void UExec_TargetAcquireV3::Execute(const FSpellExecContextV3& Ctx, const void* 
         return;
     }
 
-    UWorld* World = GetWorldFromExecCtx(Ctx);
-    if (!World)
+    UWorld* W = IMOP_GetWorldFromExecCtx(Ctx);
+
+    if (!W)
     {
         UE_LOG(LogIMOPExecTargetAcquireV3, Error, TEXT("TargetAcquire: World missing."));
         return;
     }
 
-    UTargetingSubsystemV3* Sub = World->GetSubsystem<UTargetingSubsystemV3>();
+    UTargetingSubsystemV3* Sub = W->GetSubsystem<UTargetingSubsystemV3>();
     if (!Sub)
     {
         UE_LOG(LogIMOPExecTargetAcquireV3, Error, TEXT("TargetAcquire: TargetingSubsystemV3 missing."));

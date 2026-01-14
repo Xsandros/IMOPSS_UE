@@ -3,20 +3,7 @@
 #include "Status/SpellPayloadsStatusV3.h"
 #include "Status/SpellStatusSubsystemV3.h"
 #include "Stores/SpellTargetStoreV3.h"
-
-static UWorld* GetWorldFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-	return Ctx.WorldContext ? Ctx.WorldContext->GetWorld() : nullptr;
-}
-
-static UGameInstance* GetGIFromExecCtx(const FSpellExecContextV3& Ctx)
-{
-	if (UWorld* W = GetWorldFromExecCtx(Ctx))
-	{
-		return W->GetGameInstance();
-	}
-	return nullptr;
-}
+#include "Core/SpellExecContextHelpersV3.h"
 
 
 const UScriptStruct* UExec_RemoveStatusV3::GetPayloadStruct() const
@@ -34,7 +21,7 @@ void UExec_RemoveStatusV3::Execute(const FSpellExecContextV3& Ctx, const void* P
 	FTargetSetV3 Set;
 	if (!Ctx.TargetStore->Get(P->TargetSet, Set)) return;
 
-	UWorld* W = GetWorldFromExecCtx(Ctx);
+	UWorld* W = IMOP_GetWorldFromExecCtx(Ctx);
 	USpellStatusSubsystemV3* Status = W ? W->GetSubsystem<USpellStatusSubsystemV3>() : nullptr;
 	if (!Status) return;
 

@@ -15,15 +15,26 @@
 #include "Targeting/Exec_TargetFilterV3.h"
 #include "Targeting/Exec_TargetSelectV3.h"
 
+// Effects
+#include "Effects/SpellPayloadsEffectsV3.h"
+#include "Effects/Exec_ModifyAttributeV3.h"
+#include "Effects/Exec_ReadAttributeV3.h"
+#include "Effects/Exec_ApplyForceV3.h"
+
+// Status
+#include "Status/SpellPayloadsStatusV3.h"
+#include "Status/Exec_ApplyStatusV3.h"
+#include "Status/Exec_RemoveStatusV3.h"
+
+
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPContractsV3, Log, All);
 
 static TArray<FActionBindingV3> BuildDefaultBindings()
 {
 	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
-
 	TArray<FActionBindingV3> Binds;
-	Binds.Reserve(8);
+	Binds.Reserve(14);
 
 	Binds.Add({ Tags.Action_EmitEvent,      UExec_EmitEventV3::StaticClass(),      FPayload_EmitEventV3::StaticStruct() });
 	Binds.Add({ Tags.Action_SetVariable,    UExec_SetVariableV3::StaticClass(),    FPayload_SetVariableV3::StaticStruct() });
@@ -33,6 +44,14 @@ static TArray<FActionBindingV3> BuildDefaultBindings()
 	Binds.Add({ Tags.Action_Targeting_Acquire, UExec_TargetAcquireV3::StaticClass(), FPayload_TargetAcquireV3::StaticStruct() });
 	Binds.Add({ Tags.Action_Targeting_Filter,  UExec_TargetFilterV3::StaticClass(),  FPayload_TargetFilterV3::StaticStruct() });
 	Binds.Add({ Tags.Action_Targeting_Select,  UExec_TargetSelectV3::StaticClass(),  FPayload_TargetSelectV3::StaticStruct() });
+	// Effects
+	Binds.Add({ Tags.Action_Effect_ModifyAttribute, UExec_ModifyAttributeV3::StaticClass(), FPayload_EffectModifyAttributeV3::StaticStruct() });
+	Binds.Add({ Tags.Action_Effect_ReadAttribute,   UExec_ReadAttributeV3::StaticClass(),   FPayload_ReadAttributeV3::StaticStruct() });
+	Binds.Add({ Tags.Action_Effect_ApplyForce,      UExec_ApplyForceV3::StaticClass(),      FPayload_EffectApplyForceV3::StaticStruct() });
+
+	// Status
+	Binds.Add({ Tags.Action_Status_Apply,           UExec_ApplyStatusV3::StaticClass(),     FPayload_ApplyStatusV3::StaticStruct() });
+	Binds.Add({ Tags.Action_Status_Remove,          UExec_RemoveStatusV3::StaticClass(),    FPayload_RemoveStatusV3::StaticStruct() });
 
 	
 	return Binds;

@@ -1,0 +1,37 @@
+#include "Effects/Exec_ModifyAttributeV3.h"
+
+#include "Effects/SpellPayloadsEffectsV3.h"
+#include "Effects/EffectResolverSubsystemV3.h"
+#include "Stores/SpellTargetStoreV3.h"
+
+const UScriptStruct* UExec_ModifyAttributeV3::GetPayloadStruct() const
+{
+	return FPayload_EffectModifyAttributeV3::StaticStruct();
+}
+
+void UExec_ModifyAttributeV3::Execute(const FSpellExecContextV3& Ctx, const void* PayloadData)
+{
+	const FPayload_EffectModifyAttributeV3* P = static_cast<const FPayload_EffectModifyAttributeV3*>(PayloadData);
+	if (!P || !Ctx.TargetStore || !Ctx.WorldContext) return;
+
+	if (!Ctx.bAuthority) return;
+
+	FTargetSetV3 Set;
+	if (!Ctx.TargetStore->TryGet(P->TargetSet, Set)) return;
+
+	TArray<TWeakObjectPtr<AActor>> Targets;
+	Targets.Reserve(Set.Targets.Num());
+	for (const FTargetRefV3& R : Set.Targets) Targets.Add(R.Actor);
+
+	if (UGameInstance* GI = Ctx.WorldContext->GetGameInstance())
+	{
+		if (UEffectResolverSubsystemV3* Res = GI->GetSubsystem<UEffectResolverSubsystemV3>())
+		{
+			TArray<FEffectResultV3> Results;
+			Res->ResolveAndApplyToTargets(Ctx, P->Effect, Targets, Results);
+
+			// TODO "final": emit Event.Effect.* + Event.Damage/Heal derived from tags.
+			// Use Ctx.EventBus->Emit(...).
+		}
+	}
+}

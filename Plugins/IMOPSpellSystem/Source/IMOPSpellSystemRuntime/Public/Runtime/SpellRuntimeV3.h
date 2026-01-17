@@ -46,6 +46,8 @@ public:
 
     // FINAL: startet ein Spell-Asset mit ExecContext
     void StartFromAsset(USpellSpecV3* InSpecAsset, const FSpellExecContextV3& Ctx);
+    
+    const FGuid& GetRuntimeGuid() const { return RuntimeGuid; }
 
 
 private:
@@ -82,7 +84,12 @@ private:
     
     UPROPERTY()
     int32 RngSeed = 0;
+    
+    UPROPERTY()
+    FGuid RuntimeGuid;
 
+
+    
     FRandomStream RandomStream;
 
     UPROPERTY()

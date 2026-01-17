@@ -28,4 +28,7 @@ struct FSpellEventV3
 
     UPROPERTY(BlueprintReadWrite, Category = "Spell|Event")
     float TimeSeconds = 0.f;
+    
+    UPROPERTY(BlueprintReadWrite, Category = "Spell|Event")
+    FGuid RuntimeGuid;
 };

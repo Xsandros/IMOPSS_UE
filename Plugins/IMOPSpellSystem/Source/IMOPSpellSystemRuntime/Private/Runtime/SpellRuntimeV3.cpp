@@ -21,6 +21,13 @@ void USpellRuntimeV3::Init(UObject* WorldContextObj, AActor* InCaster, USpellSpe
 
     VariableStore = NewObject<USpellVariableStoreV3>(this);
     TargetStore = NewObject<USpellTargetStoreV3>(this);
+    
+    if (!RuntimeGuid.IsValid())
+    {
+        RuntimeGuid = FGuid::NewGuid();
+    }
+
+    
 }
 
 void USpellRuntimeV3::Start()
@@ -52,6 +59,8 @@ void USpellRuntimeV3::Start()
     Ev.EventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Spell.Event.Spell.Start")));
     Ev.Caster = Caster;
     Ev.Sender = this;
+    Ev.RuntimeGuid = RuntimeGuid;
+
     if (UWorld* W = GetWorld())
     {
         Ev.FrameNumber = (int32)GFrameCounter;
@@ -84,6 +93,8 @@ void USpellRuntimeV3::Stop()
         Ev.EventTag = FGameplayTag::RequestGameplayTag(FName(TEXT("Spell.Event.Spell.End")));
         Ev.Caster = Caster;
         Ev.Sender = this;
+        Ev.RuntimeGuid = RuntimeGuid;
+
         if (UWorld* W = GetWorld())
         {
             Ev.FrameNumber = (int32)GFrameCounter;
@@ -98,6 +109,20 @@ void USpellRuntimeV3::OnSpellEvent(const FSpellEventV3& Ev)
 {
     if (!bRunning || !Spec) return;
 
+    if (!bRunning || !Spec) return;
+
+    // Accept only:
+    // 1) events sent by THIS runtime (Sender == this)
+    // 2) events explicitly targeted to THIS runtime via RuntimeGuid
+    const bool bSenderMatches = (Ev.Sender == this);
+    const bool bGuidMatches = (Ev.RuntimeGuid.IsValid() && Ev.RuntimeGuid == RuntimeGuid);
+
+    if (!bSenderMatches && !bGuidMatches)
+    {
+        return;
+    }
+
+    
     // Dispatch handlers that match
     for (const FSpellHandlerV3& H : Spec->Handlers)
     {

@@ -67,4 +67,8 @@ private:
 	TObjectPtr<USpellRuntimeV3> LastRuntime = nullptr;
 
 	int32 CastCounter = 0;
+	
+	UFUNCTION(BlueprintCallable, Category="IMOP|Spell|Casting")
+	FGuid GetLastRuntimeGuid() const;
+
 };

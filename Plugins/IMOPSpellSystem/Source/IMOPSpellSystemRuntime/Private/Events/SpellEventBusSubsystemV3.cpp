@@ -1,5 +1,6 @@
 #include "Events/SpellEventBusSubsystemV3.h"
 #include "Events/SpellEventListenerV3.h"
+#include "Debug/SpellTraceSubsystemV3.h"
 
 #include "Engine/World.h"
 
@@ -50,11 +51,27 @@ bool USpellEventBusSubsystemV3::Unsubscribe(const FSpellEventSubscriptionHandleV
 
 void USpellEventBusSubsystemV3::Emit(const FSpellEventV3& Ev)
 {
+    if (UGameInstance* GI = GetGameInstance())
+    {
+        if (USpellTraceSubsystemV3* Trace = GI->GetSubsystem<USpellTraceSubsystemV3>())
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Emit %s guid=%s sender=%s"),
+             *Ev.EventTag.ToString(),
+             *Ev.RuntimeGuid.ToString(),
+            Ev.Sender ? *Ev.Sender->GetName() : TEXT("None"));
+
+            Trace->Record(Ev);
+        }
+    }
+
+    
     // Compact dead listeners
     Subscribers.RemoveAll([](const FSpellEventBusSubscriberV3& S)
         {
             return !S.Listener.IsValid();
         });
+    
+    
 
     for (const FSpellEventBusSubscriberV3& S : Subscribers)
     {

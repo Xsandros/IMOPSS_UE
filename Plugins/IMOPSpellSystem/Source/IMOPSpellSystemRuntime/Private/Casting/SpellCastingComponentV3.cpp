@@ -135,3 +135,12 @@ void USpellCastingComponentV3::StopAll()
 	ActiveRuntimes.Reset();
 	LastRuntime = nullptr;
 }
+
+FGuid USpellCastingComponentV3::GetLastRuntimeGuid() const
+{
+	if (LastRuntime)
+	{
+		return LastRuntime->GetRuntimeGuid();
+	}
+	return FGuid();
+}

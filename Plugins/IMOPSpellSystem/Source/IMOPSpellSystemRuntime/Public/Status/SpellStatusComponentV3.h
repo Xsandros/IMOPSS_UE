@@ -21,6 +21,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category="IMOP|Status")
 	int32 GetStacks(FGameplayTag StatusTag) const;
 
+	
 	const TArray<FActiveStatusV3>& GetAll() const { return Active; }
 
 	// internal mutation (authority only)
@@ -31,6 +32,10 @@ public:
 	
 	/** Authority-only: decrements timers and returns expired statuses in stable order */
 	void TickStatuses(float DeltaSeconds, TArray<FActiveStatusV3>& OutExpired);
+	
+	UFUNCTION(BlueprintCallable, Category="IMOP|Status")
+	void GetAllStatuses(TArray<FActiveStatusV3>& OutStatuses) const { OutStatuses = Active; }
+
 	
 private:
 	UPROPERTY(Replicated)

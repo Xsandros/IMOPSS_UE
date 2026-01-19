@@ -13,7 +13,10 @@ public class IMOPSpellSystemRuntime : ModuleRules
 			"Engine",
 			"GameplayTags",
 			"NetCore",
-			"EnhancedInput"
+			"EnhancedInput",
+			"UMG",
+			"Slate",
+			"SlateCore"
 		});
 
 

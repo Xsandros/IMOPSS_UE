@@ -64,10 +64,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category="IMOP|Debug|Trace")
 	void ClearAll();
 
+	UFUNCTION(BlueprintCallable, Category="IMOP|Debug|Trace")
+	int64 GetRevision() const { return Revision; }
+	
+	UFUNCTION(BlueprintCallable, Category="IMOP|Debug|Trace")
+	bool GetLatestRuntimeGuid(FGuid& OutRuntimeGuid) const;
+
+	UFUNCTION(BlueprintCallable, Category="IMOP|Debug|Trace")
+	void GetRecentRowsFiltered(const FGuid& RuntimeGuid, bool bFilterByRuntime, int32 MaxRows, TArray<FSpellTraceRowV3>& OutRows) const;
+
 private:
 	UPROPERTY()
-	TMap<FGuid, FSpellTraceBufferV3> EventsByRuntime;
+	int64 Revision = 0;
 
+	UPROPERTY()
+	TMap<FGuid, FSpellTraceBufferV3> EventsByRuntime;
 
 	UPROPERTY()
 	TArray<FSpellTraceRowV3> RecentRows;

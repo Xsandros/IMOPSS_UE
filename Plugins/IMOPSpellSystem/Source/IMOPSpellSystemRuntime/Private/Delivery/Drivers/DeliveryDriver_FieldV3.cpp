@@ -256,7 +256,7 @@ void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, EDeliveryStop
 	FDeliveryEventContextV3 Ev;
 	Ev.Type = EDeliveryEventTypeV3::Stopped;
 	Ev.Handle = DeliveryCtx.Handle;
-	Ev.StopReason = Reason;
+	Ev.StopReminder = Reason;
 	Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 	Ev.HitTags = DeliveryCtx.Spec.HitTags;
 	Ev.Caster = Ctx.Caster;

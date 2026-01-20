@@ -6,6 +6,7 @@
 #include "Actions/SpellActionExecutorV3.h"
 #include "Core/SpellGameplayTagsV3.h"
 #include "Delivery/Drivers/DeliveryDriver_FieldV3.h"
+#include "Delivery/Drivers/DeliveryDriver_MoverV3.h"
 #include "Events/SpellEventBusSubsystemV3.h"
 #include "Events/SpellEventV3.h"
 #include "Runtime/SpellRuntimeV3.h"
@@ -24,6 +25,7 @@ void UDeliverySubsystemV3::Deinitialize()
 {
 	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystemV3 Deinitialize: stopping %d active deliveries"), Active.Num());
 	Active.Empty();
+	ActiveCtx.Empty();
 	NextInstanceByRuntimeAndId.Empty();
 	Super::Deinitialize();
 }
@@ -40,22 +42,41 @@ void UDeliverySubsystemV3::Tick(float DeltaSeconds)
 
 	for (auto& It : Active)
 	{
+		const FDeliveryHandleV3 Handle = It.Key;
 		UDeliveryDriverBaseV3* Driver = It.Value.Get();
+
 		if (!Driver || !Driver->IsActive())
 		{
-			ToRemove.Add(It.Key);
+			ToRemove.Add(Handle);
 			continue;
 		}
-		// NOTE: We don’t have a canonical Ctx here; drivers that need a Ctx tick should use internal timers,
-		// or we can extend subsystem to cache a minimal tick context later.
-		// For Phase 4 InstantQuery (one-shot) this is fine.
+
+		FSpellExecContextV3* CtxPtr = ActiveCtx.Find(Handle);
+		if (!CtxPtr)
+		{
+			UE_LOG(LogIMOPDeliveryV3, Warning,
+				TEXT("DeliverySubsystem Tick: missing ActiveCtx for Id=%s Inst=%d (removing)"),
+				*Handle.DeliveryId.ToString(), Handle.InstanceIndex);
+			ToRemove.Add(Handle);
+			continue;
+		}
+
+		Driver->Tick(*CtxPtr, DeltaSeconds);
+
+		// driver may have stopped itself during tick
+		if (!Driver->IsActive())
+		{
+			ToRemove.Add(Handle);
+		}
 	}
 
 	for (const FDeliveryHandleV3& H : ToRemove)
 	{
 		Active.Remove(H);
+		ActiveCtx.Remove(H);
 	}
 }
+
 
 int32 UDeliverySubsystemV3::AllocateInstanceIndex(const FGuid& RuntimeGuid, FName DeliveryId)
 {
@@ -72,6 +93,8 @@ TObjectPtr<UDeliveryDriverBaseV3> UDeliverySubsystemV3::CreateDriverForKind(EDel
 		return NewObject<UDeliveryDriver_InstantQueryV3>(this);
 	case EDeliveryKindV3::Field:
 		return NewObject<UDeliveryDriver_FieldV3>(this);
+	case EDeliveryKindV3::Mover: return NewObject<UDeliveryDriver_MoverV3>(this);
+
 
 	default:
 		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("CreateDriverForKind: Kind %d not implemented yet"), (int32)Kind);
@@ -127,10 +150,12 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	}
 
 	Active.Add(Handle, Driver);
-	OutHandle = Handle;
+	ActiveCtx.Add(Handle, Ctx);
 
+	OutHandle = Handle;
 	Driver->Start(Ctx, Dctx);
 	return true;
+
 }
 
 bool UDeliverySubsystemV3::StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason)
@@ -140,7 +165,9 @@ bool UDeliverySubsystemV3::StopDelivery(const FSpellExecContextV3& Ctx, const FD
 		UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StopDelivery: %s Inst=%d Reason=%d"), *Handle.DeliveryId.ToString(), Handle.InstanceIndex, (int32)Reason);
 		Driver->Stop(Ctx, Reason);
 		Active.Remove(Handle);
+		ActiveCtx.Remove(Handle);
 		return true;
+
 	}
 	return false;
 }

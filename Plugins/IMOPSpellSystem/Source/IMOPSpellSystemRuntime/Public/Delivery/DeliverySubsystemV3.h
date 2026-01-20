@@ -5,10 +5,10 @@
 #include "Delivery/DeliveryTypesV3.h"
 #include "Delivery/DeliverySpecV3.h"
 #include "Delivery/DeliveryContextV3.h"
+#include "Actions/SpellActionExecutorV3.h" // for FSpellExecContextV3 (USTRUCT, GC-safe snapshot)
 #include "DeliverySubsystemV3.generated.h"
 
 class UDeliveryDriverBaseV3;
-struct FSpellExecContextV3;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogIMOPDeliveryV3, Log, All);
 
@@ -36,6 +36,11 @@ public:
 private:
 	UPROPERTY()
 	TMap<FDeliveryHandleV3, TObjectPtr<UDeliveryDriverBaseV3>> Active;
+
+	// Ctx snapshot per active delivery (needed for ticking movers/fields; GC-safe because FSpellExecContextV3 is USTRUCT with UPROPERTYs)
+	UPROPERTY()
+	TMap<FDeliveryHandleV3, FSpellExecContextV3> ActiveCtx;
+
 	
 	TMap<FGuid, TMap<FName, int32>> NextInstanceByRuntimeAndId;
 

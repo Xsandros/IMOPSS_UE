@@ -4,7 +4,13 @@
 #include "GameFramework/Actor.h"
 #include "GameplayTagAssetInterface.h"
 #include "Runtime/SpellRuntimeV3.h"   // <- damit USpellRuntimeV3 vollständig ist
-
+#include "Relations/SpellRelationSubsystemV3.h"
+#include "Relations/SpellRelationSubsystemV3.h"
+#include "Relations/SpellRelationEventDataV3.h"
+#include "Core/SpellGameplayTagsV3.h"
+#include "StructUtils/InstancedStruct.h"
+#include "Events/SpellEventBusSubsystemV3.h"
+#include "Core/SpellExecContextHelpersV3.h" // for IMOP_GetGIFromExecCtx
 #include "Engine/World.h"
 
 ETargetRelationV3 UTargetingGameHooks_DefaultV3::GetRelation(const FSpellExecContextV3& Ctx, const AActor* Candidate) const
@@ -14,8 +20,77 @@ ETargetRelationV3 UTargetingGameHooks_DefaultV3::GetRelation(const FSpellExecCon
     {
         return ETargetRelationV3::Self;
     }
-    return ETargetRelationV3::Any;
+
+    // Find World
+    UWorld* World = nullptr;
+    if (USpellRuntimeV3* RT = Ctx.Runtime.Get())
+    {
+        World = RT->GetWorld();
+    }
+    if (!World && Ctx.WorldContext)
+    {
+        World = Ctx.WorldContext->GetWorld();
+    }
+
+    // Fallback if no world
+    if (!World)
+    {
+        return ETargetRelationV3::Any;
+    }
+
+    ETargetRelationV3 Result = ETargetRelationV3::Any;
+
+    FGameplayTag ReasonTag;
+    FGameplayTag MatchedA;
+    FGameplayTag MatchedB;
+
+    if (USpellRelationSubsystemV3* Rel = World->GetSubsystem<USpellRelationSubsystemV3>())
+    {
+        Result = Rel->ResolveRelationDetailed(Caster, Candidate, ReasonTag, MatchedA, MatchedB);
+    }
+    else
+    {
+        Result = ETargetRelationV3::Any;
+    }
+
+    // Emit debug event (optional)
+    if (bEmitRelationDebugEvents)
+    {
+        if (UGameInstance* GI = IMOP_GetGIFromExecCtx(Ctx))
+        {
+            if (USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>())
+            {
+                const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+
+                FSpellEventV3 Ev;
+                Ev.EventTag = Tags.Event_Relation_Resolved;
+
+                Ev.Caster = const_cast<AActor*>(Caster);
+                Ev.Sender = Ctx.Runtime.Get(); // runtime as sender
+
+                Ev.FrameNumber = GFrameNumber;
+                Ev.TimeSeconds = World->GetTimeSeconds();
+                Ev.RuntimeGuid = (Ctx.Runtime ? Ctx.Runtime->GetRuntimeGuid() : FGuid());
+
+                FSpellEventData_RelationResolvedV3 Data;
+                Data.Target = const_cast<AActor*>(Candidate);
+                Data.Relation = Result;
+                Data.ReasonTag = ReasonTag;
+                Data.MatchedA = MatchedA;
+                Data.MatchedB = MatchedB;
+
+                Ev.Data = FInstancedStruct::Make<FSpellEventData_RelationResolvedV3>(Data);
+
+
+                Bus->Emit(Ev);
+            }
+        }
+    }
+
+    return Result;
 }
+
+
 
 bool UTargetingGameHooks_DefaultV3::HasGameplayTag(const AActor* Candidate, FGameplayTag Tag) const
 {

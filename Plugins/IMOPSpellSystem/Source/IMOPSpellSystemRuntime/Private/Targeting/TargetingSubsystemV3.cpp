@@ -1,4 +1,5 @@
 #include "Targeting/TargetingSubsystemV3.h"
+#include "Targeting/TargetingLogV3.h"
 
 #include "Actions/SpellActionExecutorV3.h"
 #include "Targeting/TargetingBackendsV3.h"
@@ -97,12 +98,82 @@ bool UTargetingSubsystemV3::AcquireTargets(
 	case ETargetAcquireKindV3::RadiusQuery:
 	default:
 	{
-		FTargetQueryResultV3 Q;
-		if (!Backend->RadiusQuery(World, OriginLoc, Request.Radius, Q, &OutResponse.Error))
-		{
-			return false;
-		}
-		Candidates = Q.Candidates;
+			UE_LOG(LogIMOPTargetingV3, Log,
+				TEXT("Acquire: Kind=%d Raw candidates from backend = %d"),
+				(int32)Request.Kind,
+				Candidates.Num());
+
+
+			
+			FTargetQueryResultV3 Q;
+
+			// Apply per-spell object type override if backend is default backend
+			const UTargetingBackend_DefaultV3* DefaultBackendConst = Cast<UTargetingBackend_DefaultV3>(BackendObject);
+			UTargetingBackend_DefaultV3* DefaultBackend = const_cast<UTargetingBackend_DefaultV3*>(DefaultBackendConst);
+
+			TArray<TEnumAsByte<EObjectTypeQuery>> SavedTypes;
+			const bool bHasOverride = (DefaultBackend && Request.ObjectTypesOverride.Num() > 0);
+
+			if (bHasOverride)
+			{
+				SavedTypes = DefaultBackend->ObjectTypes;
+				DefaultBackend->ObjectTypes = Request.ObjectTypesOverride;
+			}
+
+			const bool bOk = Backend->RadiusQuery(World, OriginLoc, Request.Radius, Q, &OutResponse.Error);
+
+			if (bHasOverride)
+			{
+				DefaultBackend->ObjectTypes = SavedTypes;
+			}
+
+			if (!bOk)
+			{
+				return false;
+			}
+
+			Candidates = Q.Candidates;
+
+			// Coarse acquisition filters (NOT semantic filters)
+			Candidates.RemoveAll([&](const FTargetRefV3& R)
+			{
+				AActor* A = R.Actor.Get();
+				if (!A) return true;
+
+				if (!Request.bAllowSelf)
+				{
+					if (Ctx.Caster && A == Ctx.Caster.Get())
+					{
+						return true;
+					}
+				}
+
+				if (Request.RequiredActorClass)
+				{
+					if (!A->IsA(Request.RequiredActorClass))
+					{
+						return true;
+					}
+				}
+
+				return false;
+			});
+			UE_LOG(LogIMOPTargetingV3, Log,
+				TEXT("Acquire: Candidates after coarse filters = %d"),
+				Candidates.Num());
+
+			for (const FTargetRefV3& R : Candidates)
+			{
+				if (AActor* A = R.Actor.Get())
+				{
+					UE_LOG(LogIMOPTargetingV3, Verbose,
+						TEXT("  Candidate: %s (%s)"),
+						*A->GetName(),
+						*A->GetClass()->GetName());
+				}
+			}
+
+			
 		break;
 	}
 	}
@@ -112,11 +183,22 @@ bool UTargetingSubsystemV3::AcquireTargets(
 	// 2) Filter
 	FTargetingFiltersV3::ApplyFilters(Ctx, *Hooks, OriginLoc, Request.Filters, Candidates);
 
+	UE_LOG(LogIMOPTargetingV3, Log,
+	TEXT("Acquire: Candidates after TargetFilters = %d"),
+	Candidates.Num());
+
+	
 	// 3) Select
 	TArray<FTargetRefV3> Selected;
 	FTargetingSelectionV3::Select(Ctx, OriginLoc, Request.Select, Candidates, Selected);
 
 	OutResponse.Selected = Selected;
 	OutResponse.bSucceeded = true;
+	
+	UE_LOG(LogIMOPTargetingV3, Log,
+	TEXT("Acquire: Final selected targets = %d"),
+	OutResponse.Selected.Num());
+
+	
 	return true;
 }

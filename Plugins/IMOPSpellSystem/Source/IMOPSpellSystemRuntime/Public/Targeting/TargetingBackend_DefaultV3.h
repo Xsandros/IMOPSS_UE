@@ -10,22 +10,21 @@ class IMOPSPELLSYSTEMRUNTIME_API UTargetingBackend_DefaultV3 : public UObject, p
 {
     GENERATED_BODY()
 public:
+    UTargetingBackend_DefaultV3();
+
     virtual bool RadiusQuery(
         const UWorld* World,
         const FVector& Origin,
         float Radius,
         FTargetQueryResultV3& OutResult,
         FText* OutError = nullptr) const override;
-
-public:
-    // Preferred: multiple object types
+    
+    // Preferred: allow multiple object types (Pawn + WorldDynamic, etc.)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Targeting")
     TArray<TEnumAsByte<EObjectTypeQuery>> ObjectTypes;
 
-    // Legacy fallback (if ObjectTypes empty)
+    // Legacy fallback if ObjectTypes is empty
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Targeting")
     TEnumAsByte<ECollisionChannel> OverlapChannel = ECC_Pawn;
-    
-    UTargetingBackend_DefaultV3();
-
 };
+

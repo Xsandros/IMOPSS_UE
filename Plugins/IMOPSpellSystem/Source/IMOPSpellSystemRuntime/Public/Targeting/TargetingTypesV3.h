@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Components/ActorComponent.h"
 #include "GameplayTagContainer.h"
 #include "TargetingTypesV3.generated.h"
 
@@ -95,25 +96,63 @@ UENUM(BlueprintType)
 enum class ETargetFilterKindV3 : uint8
 {
     Relation,
+
+    // Single-tag (backwards compatible)
     HasTag,
+
+    // Tag containers (final)
+    HasAnyTags,
+    HasAllTags,
+    HasNoneTags,
+
+    // Status (single tag)
     HasStatus,
+
     LineOfSight,
-    DistanceRange
+    DistanceRange,
+
+    // Components (final)
+    HasComponent,
+    HasAttributeComponent,
+    HasStatusComponent
 };
+
 
 USTRUCT(BlueprintType)
 struct FTargetFilterV3
 {
     GENERATED_BODY()
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) ETargetFilterKindV3 Kind = ETargetFilterKindV3::Relation;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) ETargetFilterOpV3 Op = ETargetFilterOpV3::Keep;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    ETargetFilterKindV3 Kind = ETargetFilterKindV3::Relation;
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) ETargetRelationV3 Relation = ETargetRelationV3::Any;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) FGameplayTag Tag;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) float MinDistance = 0.f;
-    UPROPERTY(EditAnywhere, BlueprintReadWrite) float MaxDistance = 0.f;
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    ETargetFilterOpV3 Op = ETargetFilterOpV3::Keep;
+
+    // --- Relation ---
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    ETargetRelationV3 Relation = ETargetRelationV3::Any;
+
+    // --- Single tag (legacy / quick) ---
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FGameplayTag Tag;
+
+    // --- Tag containers (final) ---
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    FGameplayTagContainer Tags;
+
+    // --- Distance ---
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float MinDistance = 0.f;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    float MaxDistance = 0.f;
+
+    // --- Components ---
+    UPROPERTY(EditAnywhere, BlueprintReadWrite)
+    TSubclassOf<UActorComponent> ComponentClass;
 };
+
 
 // ----------------- Selection -----------------
 

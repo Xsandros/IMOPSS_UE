@@ -59,7 +59,31 @@ struct IMOPSPELLSYSTEMRUNTIME_API FIMOPSpellGameplayTagsV3
 	FGameplayTag Event_Damage_Taken;
 	FGameplayTag Event_Heal_Dealt;
 	FGameplayTag Event_Heal_Received;
+	
+	// ===== Relations Debug (Targeting/GameHooks) =====
+	FGameplayTag Event_Relation_Resolved;
 
+	// Reason tags carried inside event Data (not event tags themselves)
+	FGameplayTag Relation_Reason_Forced;
+	FGameplayTag Relation_Reason_OwnerAlly;
+	FGameplayTag Relation_Reason_SharedAffiliation;
+	FGameplayTag Relation_Reason_RuleHostile;
+	FGameplayTag Relation_Reason_RuleFriendly;
+	FGameplayTag Relation_Reason_TargetNotTargetable;
+	FGameplayTag Relation_Reason_FallbackNeutral;
+
+	
+	// ===== Phase 4: Delivery =====
+	FGameplayTag Action_Delivery_Start;
+	FGameplayTag Action_Delivery_Stop;
+
+	FGameplayTag Event_Delivery_Started;
+	FGameplayTag Event_Delivery_Stopped;
+	FGameplayTag Event_Delivery_Hit;
+	FGameplayTag Event_Delivery_Enter;
+	FGameplayTag Event_Delivery_Stay;
+	FGameplayTag Event_Delivery_Exit;
+	FGameplayTag Event_Delivery_Tick;
 
 private:
 	void Initialize();

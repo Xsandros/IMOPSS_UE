@@ -1,8 +1,9 @@
 #include "Targeting/TargetingBackend_DefaultV3.h"
 #include "Engine/World.h"
 #include "Engine/EngineTypes.h"
-
 #include "GameFramework/Actor.h"
+#include "Targeting/TargetingLogV3.h"
+
 #include "Kismet/KismetSystemLibrary.h"
 
 bool UTargetingBackend_DefaultV3::RadiusQuery(
@@ -12,18 +13,20 @@ bool UTargetingBackend_DefaultV3::RadiusQuery(
 	FTargetQueryResultV3& OutResult,
 	FText* OutError) const
 {
-	
-	UE_LOG(LogTemp, Warning, TEXT("IMOP RadiusQuery using DefaultBackend. ObjectTypes=%d FallbackChannel=%d"),
-	ObjectTypes.Num(), (int32)OverlapChannel);
-
 	OutResult.Candidates.Reset();
 
+	UE_LOG(LogIMOPTargetingV3, VeryVerbose,
+	TEXT("RadiusQuery: Origin=%s Radius=%.1f ObjectTypes=%d"),
+	*Origin.ToString(),
+	Radius,
+	ObjectTypes.Num());
+
+	
 	if (!World)
 	{
 		if (OutError) *OutError = FText::FromString(TEXT("RadiusQuery: World is null"));
 		return false;
 	}
-
 	if (Radius <= 0.f)
 	{
 		if (OutError) *OutError = FText::FromString(TEXT("RadiusQuery: Radius <= 0"));
@@ -48,25 +51,36 @@ bool UTargetingBackend_DefaultV3::RadiusQuery(
 		Origin,
 		Radius,
 		ObjTypes,
-		AActor::StaticClass(),
-		TArray<AActor*>(),
+		/*ActorClassFilter*/ AActor::StaticClass(),
+		/*ActorsToIgnore*/ TArray<AActor*>(),
 		Overlaps);
+	
+	UE_LOG(LogIMOPTargetingV3, Verbose,
+		TEXT("RadiusQuery: Overlaps found = %d"),
+		Overlaps.Num());
 
-	if (!bHit)
-	{
-		return true; // empty is fine
-	}
-
-	// Convert to candidates (unique)
 	for (AActor* A : Overlaps)
 	{
 		if (!A) continue;
+		UE_LOG(LogIMOPTargetingV3, VeryVerbose,
+			TEXT("  Overlap: %s (%s)"),
+			*A->GetName(),
+			*A->GetClass()->GetName());
+	}
 
+	
+	if (!bHit)
+	{
+		return true; // succeeded, just empty
+	}
+
+	for (AActor* A : Overlaps)
+	{
+		if (!A) continue;
 		FTargetRefV3 R;
 		R.Actor = A;
 		OutResult.Candidates.Add(R);
 	}
-
 	return true;
 }
 

@@ -25,4 +25,8 @@ public:
 public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Targeting|LOS")
     TEnumAsByte<ECollisionChannel> LineTraceChannel = ECC_Visibility;
+    
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Targeting|Relations")
+    bool bEmitRelationDebugEvents = true;
+
 };

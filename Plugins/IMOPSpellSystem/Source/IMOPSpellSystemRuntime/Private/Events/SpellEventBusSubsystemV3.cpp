@@ -55,7 +55,7 @@ void USpellEventBusSubsystemV3::Emit(const FSpellEventV3& Ev)
     {
         if (USpellTraceSubsystemV3* Trace = GI->GetSubsystem<USpellTraceSubsystemV3>())
         {
-            UE_LOG(LogTemp, Warning, TEXT("Emit %s guid=%s sender=%s"),
+            UE_LOG(LogIMOPEventBusV3, Verbose, TEXT("Emit %s guid=%s sender=%s"),
              *Ev.EventTag.ToString(),
              *Ev.RuntimeGuid.ToString(),
             Ev.Sender ? *Ev.Sender->GetName() : TEXT("None"));

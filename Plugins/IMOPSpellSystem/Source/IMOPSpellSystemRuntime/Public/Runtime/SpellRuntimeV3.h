@@ -14,6 +14,7 @@ class USpellTargetStoreV3;
 class USpellActionRegistryV3;
 class USpellEventBusSubsystemV3;
 
+
 UCLASS(BlueprintType)
 class IMOPSPELLSYSTEMRUNTIME_API USpellRuntimeV3 : public UObject, public ISpellEventListenerV3
 {

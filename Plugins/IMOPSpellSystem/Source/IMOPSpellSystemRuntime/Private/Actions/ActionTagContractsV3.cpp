@@ -26,6 +26,12 @@
 #include "Status/Exec_ApplyStatusV3.h"
 #include "Status/Exec_RemoveStatusV3.h"
 
+// Delivery
+#include "Delivery/SpellPayloadsDeliveryV3.h"
+#include "Delivery/Exec_StartDeliveryV3.h"
+#include "Delivery/Exec_StopDeliveryV3.h"
+
+
 
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPContractsV3, Log, All);
@@ -34,7 +40,7 @@ static TArray<FActionBindingV3> BuildDefaultBindings()
 {
 	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
 	TArray<FActionBindingV3> Binds;
-	Binds.Reserve(14);
+	Binds.Reserve(18);
 
 	Binds.Add({ Tags.Action_EmitEvent,      UExec_EmitEventV3::StaticClass(),      FPayload_EmitEventV3::StaticStruct() });
 	Binds.Add({ Tags.Action_SetVariable,    UExec_SetVariableV3::StaticClass(),    FPayload_SetVariableV3::StaticStruct() });
@@ -52,6 +58,10 @@ static TArray<FActionBindingV3> BuildDefaultBindings()
 	// Status
 	Binds.Add({ Tags.Action_Status_Apply,           UExec_ApplyStatusV3::StaticClass(),     FPayload_ApplyStatusV3::StaticStruct() });
 	Binds.Add({ Tags.Action_Status_Remove,          UExec_RemoveStatusV3::StaticClass(),    FPayload_RemoveStatusV3::StaticStruct() });
+
+	// Delivery
+	Binds.Add({ Tags.Action_Delivery_Start, UExec_StartDeliveryV3::StaticClass(), FPayload_DeliveryStartV3::StaticStruct() });
+	Binds.Add({ Tags.Action_Delivery_Stop,  UExec_StopDeliveryV3::StaticClass(),  FPayload_DeliveryStopV3::StaticStruct() });
 
 	
 	return Binds;

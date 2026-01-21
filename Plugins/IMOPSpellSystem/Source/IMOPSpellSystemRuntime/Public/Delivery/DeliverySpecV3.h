@@ -106,6 +106,32 @@ struct FDeliveryBeamConfigV3
 };
 
 USTRUCT(BlueprintType)
+struct FDeliveryDebugDrawConfigV3
+{
+	GENERATED_BODY()
+
+	// Enable/disable debug draw for this delivery instance
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug")
+	bool bEnable = false;
+
+	// How long debug shapes persist (seconds)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug")
+	float Duration = 2.0f;
+
+	// Draw the evaluated shape (sphere/capsule/box/ray)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug")
+	bool bDrawShape = true;
+
+	// Draw path/segment (e.g., mover sweep, instant ray)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug")
+	bool bDrawPath = true;
+
+	// Draw hit points / impact normals
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug")
+	bool bDrawHits = true;
+};
+
+USTRUCT(BlueprintType)
 struct FDeliverySpecV3
 {
 	GENERATED_BODY()
@@ -125,14 +151,23 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryQueryPolicyV3 Query;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
 	FDeliveryStopPolicyV3 StopPolicy;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	FDeliveryDebugDrawConfigV3 DebugDraw;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
 	FGameplayTagContainer DeliveryTags;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FGameplayTagContainer HitTags;
+	
+	// Optional: write resulting hit targets into TargetStore under this key (so Effects can consume it)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FName OutTargetSet = "Targets";
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryInstantQueryConfigV3 InstantQuery;
@@ -146,3 +181,6 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryBeamConfigV3 Beam;
 };
+
+
+

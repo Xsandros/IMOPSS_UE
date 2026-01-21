@@ -3,6 +3,7 @@
 #include "Delivery/DeliverySubsystemV3.h"
 #include "Delivery/DeliveryEventContextV3.h"
 #include "Core/SpellGameplayTagsV3.h"
+#include "DrawDebugHelpers.h"
 
 #include "Actions/SpellActionExecutorV3.h"
 #include "Stores/SpellTargetStoreV3.h"
@@ -215,6 +216,30 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, float DeltaSe
 	IntegrateMotion(Ctx, DtSim);
 	const FVector NewPos = Position;
 
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawPath)
+	{
+		DrawDebugLine(Ctx.GetWorld(), PrevPos, NewPos, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 2.0f);
+	}
+
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawShape)
+	{
+		switch (DeliveryCtx.Spec.Shape.Kind)
+		{
+		case EDeliveryShapeV3::Sphere:
+			DrawDebugSphere(Ctx.GetWorld(), NewPos, DeliveryCtx.Spec.Shape.Radius, 12, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.0f);
+			break;
+		case EDeliveryShapeV3::Capsule:
+			DrawDebugCapsule(Ctx.GetWorld(), NewPos, DeliveryCtx.Spec.Shape.HalfHeight, DeliveryCtx.Spec.Shape.Radius, FQuat::Identity, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.0f);
+			break;
+		case EDeliveryShapeV3::Box:
+			DrawDebugBox(Ctx.GetWorld(), NewPos, DeliveryCtx.Spec.Shape.Extents, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.0f);
+			break;
+		default:
+			break;
+		}
+	}
+
+	
 	const float StepDist = FVector::Distance(PrevPos, NewPos);
 	DistanceTraveled += StepDist;
 
@@ -331,6 +356,16 @@ void UDeliveryDriver_MoverV3::EvaluateSweep(const FSpellExecContextV3& Ctx, cons
 
 	SortHitResultsDeterministic(Hits, From);
 
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawHits)
+	{
+		for (const FHitResult& H : Hits)
+		{
+			DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, DeliveryCtx.Spec.DebugDraw.Duration);
+			DrawDebugLine(World, H.ImpactPoint, H.ImpactPoint + H.ImpactNormal * 30.f, FColor::Yellow, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.0f);
+		}
+	}
+
+	
 	TArray<FDeliveryHitV3> OutHits;
 	OutHits.Reserve(Hits.Num());
 
@@ -395,6 +430,33 @@ void UDeliveryDriver_MoverV3::EvaluateSweep(const FSpellExecContextV3& Ctx, cons
 		Ev.Caster = Ctx.Caster;
 		Ev.Hits = MoveTemp(OutHits);
 
+		// ================================
+		// Target writeback (Hit -> TargetStore)
+		// ================================
+		if (Ctx.TargetStore && DeliveryCtx.Spec.OutTargetSet != NAME_None)
+		{
+			FTargetSetV3 OutSet;
+			OutSet.Targets.Reserve(Ev.Hits.Num());
+
+			for (const FDeliveryHitV3& DH : Ev.Hits)
+			{
+				if (!DH.Target.IsValid())
+				{
+					continue;
+				}
+
+				FTargetRefV3 Ref;
+				Ref.Actor = DH.Target;
+				OutSet.AddUnique(Ref);
+			}
+
+			Ctx.TargetStore->Set(DeliveryCtx.Spec.OutTargetSet, OutSet);
+
+			UE_LOG(LogIMOPDeliveryMoverV3, Log,
+				TEXT("Mover Writeback: TargetSet=%s Count=%d"),
+				*DeliveryCtx.Spec.OutTargetSet.ToString(),
+				OutSet.Targets.Num());
+		}		
 		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Hit, Ev);
 	}
 

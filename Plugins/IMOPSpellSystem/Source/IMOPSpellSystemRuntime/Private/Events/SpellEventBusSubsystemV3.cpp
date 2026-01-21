@@ -51,18 +51,21 @@ bool USpellEventBusSubsystemV3::Unsubscribe(const FSpellEventSubscriptionHandleV
 
 void USpellEventBusSubsystemV3::Emit(const FSpellEventV3& Ev)
 {
+    // Always log important emits (independent of Trace subsystem)
+    UE_LOG(LogIMOPEventBusV3, Verbose,
+        TEXT("Emit tag=%s guid=%s sender=%s"),
+        *Ev.EventTag.ToString(),
+        *Ev.RuntimeGuid.ToString(),
+        Ev.Sender ? *Ev.Sender->GetName() : TEXT("None"));
+
     if (UGameInstance* GI = GetGameInstance())
     {
         if (USpellTraceSubsystemV3* Trace = GI->GetSubsystem<USpellTraceSubsystemV3>())
         {
-            UE_LOG(LogIMOPEventBusV3, Verbose, TEXT("Emit %s guid=%s sender=%s"),
-             *Ev.EventTag.ToString(),
-             *Ev.RuntimeGuid.ToString(),
-            Ev.Sender ? *Ev.Sender->GetName() : TEXT("None"));
-
             Trace->Record(Ev);
         }
     }
+
 
     
     // Compact dead listeners

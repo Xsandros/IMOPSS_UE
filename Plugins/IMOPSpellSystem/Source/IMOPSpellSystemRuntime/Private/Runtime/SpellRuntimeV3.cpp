@@ -119,27 +119,82 @@ void USpellRuntimeV3::OnSpellEvent(const FSpellEventV3& Ev)
 
     if (!bSenderMatches && !bGuidMatches)
     {
+        UE_LOG(LogIMOPSpellRuntimeV3, VeryVerbose,
+            TEXT("OnSpellEvent REJECT: tag=%s sender=%s evGuid=%s runtimeGuid=%s"),
+            *Ev.EventTag.ToString(),
+            *GetNameSafe(Ev.Sender.Get()),
+            *Ev.RuntimeGuid.ToString(),
+            *RuntimeGuid.ToString());
         return;
     }
 
+    UE_LOG(LogIMOPSpellRuntimeV3, Verbose,
+        TEXT("OnSpellEvent ACCEPT: tag=%s sender=%s guid=%s"),
+        *Ev.EventTag.ToString(),
+        *GetNameSafe(Ev.Sender.Get()),
+        *Ev.RuntimeGuid.ToString());
+
+
     
+    // Dispatch handlers that match
     // Dispatch handlers that match
     for (const FSpellHandlerV3& H : Spec->Handlers)
     {
-        if (H.Trigger.Matches(Ev.EventTag))
+        if (!H.Trigger.Matches(Ev.EventTag))
         {
-            FSpellVMV3::ExecuteActions(*this, H.Actions);
+            continue;
         }
+
+        const int32 ActionCount = H.Actions.Num();
+        UE_LOG(LogIMOPSpellRuntimeV3, Log,
+            TEXT("Handler TRIGGER: tag=%s actions=%d"),
+            *Ev.EventTag.ToString(),
+            ActionCount);
+
+        if (ActionCount == 0)
+        {
+            UE_LOG(LogIMOPSpellRuntimeV3, Log,
+                TEXT("Handler DONE (no actions): tag=%s"),
+                *Ev.EventTag.ToString());
+            continue;
+        }
+
+        FSpellVMV3::ExecuteActions(*this, H.Actions);
+
+        UE_LOG(LogIMOPSpellRuntimeV3, Log,
+            TEXT("Handler DONE: tag=%s"),
+            *Ev.EventTag.ToString());
     }
 
     // Dispatch phases that match
     for (const FSpellPhaseV3& P : Spec->Phases)
     {
-        if (P.Trigger.Matches(Ev.EventTag))
+        if (!P.Trigger.Matches(Ev.EventTag))
         {
-            FSpellVMV3::ExecuteActions(*this, P.Actions);
+            continue;
         }
+
+        const int32 ActionCount = P.Actions.Num();
+        UE_LOG(LogIMOPSpellRuntimeV3, Log,
+            TEXT("Phase TRIGGER: tag=%s actions=%d"),
+            *Ev.EventTag.ToString(),
+            ActionCount);
+
+        if (ActionCount == 0)
+        {
+            UE_LOG(LogIMOPSpellRuntimeV3, Log,
+                TEXT("Phase DONE (no actions): tag=%s"),
+                *Ev.EventTag.ToString());
+            continue;
+        }
+
+        FSpellVMV3::ExecuteActions(*this, P.Actions);
+
+        UE_LOG(LogIMOPSpellRuntimeV3, Log,
+            TEXT("Phase DONE: tag=%s"),
+            *Ev.EventTag.ToString());
     }
+
 }
 
 USpellActionExecutorV3* USpellRuntimeV3::GetOrCreateExecutor(TSubclassOf<USpellActionExecutorV3> ExecClass)

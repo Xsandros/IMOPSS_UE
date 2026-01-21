@@ -13,7 +13,8 @@ class UDeliveryDriverBaseV3;
 DECLARE_LOG_CATEGORY_EXTERN(LogIMOPDeliveryV3, Log, All);
 
 UCLASS()
-class IMOPSPELLSYSTEMRUNTIME_API UDeliverySubsystemV3 : public UWorldSubsystem
+class IMOPSPELLSYSTEMRUNTIME_API UDeliverySubsystemV3 : public UTickableWorldSubsystem
+
 {
 	GENERATED_BODY()
 public:
@@ -21,9 +22,10 @@ public:
 	virtual void Deinitialize() override;
 
 	// tick via world subsystem (we’ll use FTSTicker-style in .cpp via Tickable if needed)
-	virtual void Tick(float DeltaSeconds);
-	virtual bool IsTickable() const { return true; }
-	virtual TStatId GetStatId() const;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsTickable() const override { return true; }
+	virtual TStatId GetStatId() const override;
+
 
 	bool StartDelivery(const FSpellExecContextV3& Ctx, const FDeliverySpecV3& Spec, FDeliveryHandleV3& OutHandle);
 	bool StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason);

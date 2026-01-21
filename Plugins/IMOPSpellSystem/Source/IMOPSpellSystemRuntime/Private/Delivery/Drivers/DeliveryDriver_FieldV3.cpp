@@ -5,12 +5,31 @@
 #include "Delivery/DeliveryEventContextV3.h"
 #include "Core/SpellGameplayTagsV3.h"
 #include "Engine/OverlapResult.h"
+#include "DrawDebugHelpers.h"
 
 #include "Engine/World.h"
 #include "Stores/SpellTargetStoreV3.h"
 #include "Targeting/TargetingTypesV3.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPDeliveryFieldV3, Log, All);
+
+static void BuildSortedActorsDeterministic(const TSet<TWeakObjectPtr<AActor>>& InSet, TArray<AActor*>& OutActors)
+{
+	OutActors.Reset();
+	for (const TWeakObjectPtr<AActor>& W : InSet)
+	{
+		if (AActor* A = W.Get())
+		{
+			OutActors.Add(A);
+		}
+	}
+
+	OutActors.Sort([](const AActor& A, const AActor& B)
+	{
+		return A.GetUniqueID() < B.GetUniqueID();
+	});
+}
+
 
 FTransform UDeliveryDriver_FieldV3::ResolveAttachTransform(const FSpellExecContextV3& Ctx) const
 {
@@ -72,13 +91,7 @@ void UDeliveryDriver_FieldV3::Start(const FSpellExecContextV3& Ctx, const FDeliv
 	UDeliverySubsystemV3* Subsys = Ctx.GetWorld()->GetSubsystem<UDeliverySubsystemV3>();
 	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
 
-	UE_LOG(LogIMOPDeliveryFieldV3, Log,
-		TEXT("Field Start: Id=%s Inst=%d Radius=%.1f TickInterval=%.2f"),
-		*DeliveryCtx.Handle.DeliveryId.ToString(),
-		DeliveryCtx.Handle.InstanceIndex,
-		DeliveryCtx.Spec.Shape.Radius,
-		DeliveryCtx.Spec.Field.TickInterval);
-
+	
 	// Emit Started
 	FDeliveryEventContextV3 Ev;
 	Ev.Type = EDeliveryEventTypeV3::Started;
@@ -119,8 +132,27 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 
 	const FTransform Xf = ResolveAttachTransform(Ctx);
 	const FVector Center = Xf.GetLocation();
-	const float Radius = DeliveryCtx.Spec.Shape.Radius;
+	float Radius = DeliveryCtx.Spec.Shape.Radius;
 
+	if (Radius <= 0.f)
+	{
+		UE_LOG(LogIMOPDeliveryFieldV3, Warning,
+			TEXT("Field Start: Radius <= 0 (%.2f) for Id=%s Inst=%d. Using fallback Radius=100."),
+			Radius,
+			*DeliveryCtx.Handle.DeliveryId.ToString(),
+			DeliveryCtx.Handle.InstanceIndex);
+
+		Radius = 100.f;
+	}
+
+
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawShape)
+	{
+		// Field currently uses sphere overlap; draw sphere for visibility
+		DrawDebugSphere(World, Center, Radius, 16, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.25f);
+	}
+
+	
 	TSet<TWeakObjectPtr<AActor>> NewSet;
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), false);
@@ -150,6 +182,33 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		}
 	}
 
+	// ================================
+	// Target writeback (Inside/Current -> TargetStore), deterministic order
+	// ================================
+	if (Ctx.TargetStore && DeliveryCtx.Spec.OutTargetSet != NAME_None)
+	{
+		TArray<AActor*> SortedActors;
+		BuildSortedActorsDeterministic(NewSet, SortedActors);
+
+		FTargetSetV3 OutSet;
+		OutSet.Targets.Reserve(SortedActors.Num());
+
+		for (AActor* A : SortedActors)
+		{
+			FTargetRefV3 Ref;
+			Ref.Actor = A;
+			OutSet.AddUnique(Ref);
+		}
+
+		Ctx.TargetStore->Set(DeliveryCtx.Spec.OutTargetSet, OutSet);
+
+		UE_LOG(LogIMOPDeliveryFieldV3, Log,
+			TEXT("Field Writeback: TargetSet=%s Count=%d"),
+			*DeliveryCtx.Spec.OutTargetSet.ToString(),
+			OutSet.Targets.Num());
+	}
+
+	
 	UDeliverySubsystemV3* Subsys = World->GetSubsystem<UDeliverySubsystemV3>();
 	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
 

@@ -2,6 +2,7 @@
 #include "Delivery/DeliverySubsystemV3.h"
 #include "Delivery/DeliveryEventContextV3.h"
 #include "Delivery/DeliverySpecV3.h"
+#include "DrawDebugHelpers.h"
 
 #include "Actions/SpellActionExecutorV3.h"
 #include "Core/SpellGameplayTagsV3.h"
@@ -118,6 +119,11 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 
 	const FVector To = From + Dir * Range;
 
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawPath)
+	{
+		DrawDebugLine(World, From, To, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.5f);
+	}
+	
 	UE_LOG(LogIMOPDeliveryDriverV3, Log, TEXT("InstantQuery: From=%s To=%s Range=%.1f Profile=%s IgnoreCaster=%d MaxHits=%d Multi=%d"),
 		*From.ToString(), *To.ToString(), Range, *DeliveryCtx.Spec.Query.CollisionProfile.ToString(),
 		DeliveryCtx.Spec.Query.bIgnoreCaster ? 1 : 0,
@@ -155,6 +161,16 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 		}
 	}
 
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawHits)
+	{
+		for (const FHitResult& H : Final)
+		{
+			DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, DeliveryCtx.Spec.DebugDraw.Duration);
+			DrawDebugLine(World, H.ImpactPoint, H.ImpactPoint + H.ImpactNormal * 30.f, FColor::Yellow, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.0f);
+		}
+	}
+
+	
 	// Emit Hit (batch)
 	{
 		FDeliveryEventContextV3 Ev;
@@ -175,6 +191,35 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 		}
 
 		UE_LOG(LogIMOPDeliveryDriverV3, Verbose, TEXT("InstantQuery Hit: %d hits (raw=%d)"), Ev.Hits.Num(), Hits.Num());
+		// ================================
+		// Target writeback (Hit -> TargetStore)
+		// ================================
+		if (Ctx.TargetStore && DeliveryCtx.Spec.OutTargetSet != NAME_None)
+		{
+			FTargetSetV3 OutSet;
+			OutSet.Targets.Reserve(Ev.Hits.Num());
+
+			for (const FDeliveryHitV3& DH : Ev.Hits)
+			{
+				if (!DH.Target.IsValid())
+				{
+					continue;
+				}
+
+				FTargetRefV3 Ref;
+				Ref.Actor = DH.Target;
+				OutSet.AddUnique(Ref);
+			}
+
+			Ctx.TargetStore->Set(DeliveryCtx.Spec.OutTargetSet, OutSet);
+
+			UE_LOG(LogIMOPDeliveryDriverV3, Log,
+				TEXT("InstantQuery Writeback: TargetSet=%s Count=%d"),
+				*DeliveryCtx.Spec.OutTargetSet.ToString(),
+				OutSet.Targets.Num());
+		}
+
+
 		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Hit, Ev);
 	}
 

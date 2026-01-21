@@ -212,21 +212,34 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 	UDeliverySubsystemV3* Subsys = World->GetSubsystem<UDeliverySubsystemV3>();
 	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
 
-	// === Enter ===
+	// Deterministic iteration order (TSet is not deterministic)
+	TArray<AActor*> NewActors;
+	BuildSortedActorsDeterministic(NewSet, NewActors);
+
+	TArray<AActor*> OldActors;
+	BuildSortedActorsDeterministic(CurrentSet, OldActors);
+
+	
+	// === Enter === (deterministic)
+	int32 EnterCount = 0;
 	if (DeliveryCtx.Spec.Field.bEmitEnterExit)
 	{
 		TArray<FDeliveryHitV3> EnterHits;
-		for (const TWeakObjectPtr<AActor>& A : NewSet)
+		for (AActor* A : NewActors)
 		{
-			if (!CurrentSet.Contains(A))
+			if (!A) { continue; }
+
+			const TWeakObjectPtr<AActor> W(A);
+			if (!CurrentSet.Contains(W))
 			{
 				FDeliveryHitV3 H;
-				H.Target = A;
+				H.Target = W;
 				H.Location = Center;
 				EnterHits.Add(H);
 			}
 		}
 
+		EnterCount = EnterHits.Num();
 		if (EnterHits.Num() > 0)
 		{
 			FDeliveryEventContextV3 Ev;
@@ -242,21 +255,27 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		}
 	}
 
-	// === Exit ===
+
+	// === Exit === (deterministic)
+	int32 ExitCount = 0;
 	if (DeliveryCtx.Spec.Field.bEmitEnterExit)
 	{
 		TArray<FDeliveryHitV3> ExitHits;
-		for (const TWeakObjectPtr<AActor>& A : CurrentSet)
+		for (AActor* A : OldActors)
 		{
-			if (!NewSet.Contains(A))
+			if (!A) { continue; }
+
+			const TWeakObjectPtr<AActor> W(A);
+			if (!NewSet.Contains(W))
 			{
 				FDeliveryHitV3 H;
-				H.Target = A;
+				H.Target = W;
 				H.Location = Center;
 				ExitHits.Add(H);
 			}
 		}
 
+		ExitCount = ExitHits.Num();
 		if (ExitHits.Num() > 0)
 		{
 			FDeliveryEventContextV3 Ev;
@@ -272,17 +291,25 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		}
 	}
 
-	// === Stay ===
-	if (DeliveryCtx.Spec.Field.bEmitStay && NewSet.Num() > 0)
+
+	// === Stay === (deterministic)
+	int32 StayCount = 0;
+	if (DeliveryCtx.Spec.Field.bEmitStay && NewActors.Num() > 0)
 	{
 		TArray<FDeliveryHitV3> StayHits;
-		for (const TWeakObjectPtr<AActor>& A : NewSet)
+		StayHits.Reserve(NewActors.Num());
+
+		for (AActor* A : NewActors)
 		{
+			if (!A) { continue; }
+
 			FDeliveryHitV3 H;
 			H.Target = A;
 			H.Location = Center;
 			StayHits.Add(H);
 		}
+
+		StayCount = StayHits.Num();
 
 		FDeliveryEventContextV3 Ev;
 		Ev.Type = EDeliveryEventTypeV3::Stay;
@@ -295,6 +322,14 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		UE_LOG(LogIMOPDeliveryFieldV3, VeryVerbose, TEXT("Field Stay: %d"), Ev.Hits.Num());
 		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stay, Ev);
 	}
+
+	UE_LOG(LogIMOPDeliveryFieldV3, Log,
+		TEXT("Field Eval: inside=%d enter=%d exit=%d stay=%d center=%s"),
+		NewActors.Num(),
+		EnterCount,
+		ExitCount,
+		StayCount,
+		*Center.ToString());
 
 	CurrentSet = MoveTemp(NewSet);
 }

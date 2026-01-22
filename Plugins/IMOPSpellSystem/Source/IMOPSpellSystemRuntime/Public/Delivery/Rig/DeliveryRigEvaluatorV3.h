@@ -29,6 +29,7 @@ struct FDeliveryRigEvalResultV3
 	// Optional multi-emitter poses (e.g., OrbitSampler)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	TArray<FDeliveryRigPoseV3> Emitters;
+
 };
 
 struct IMOPSPELLSYSTEMRUNTIME_API FDeliveryRigEvaluatorV3

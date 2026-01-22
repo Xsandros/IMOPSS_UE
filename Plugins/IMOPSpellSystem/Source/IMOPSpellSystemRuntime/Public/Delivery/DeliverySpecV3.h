@@ -130,6 +130,16 @@ struct FDeliveryDebugDrawConfigV3
 	// Draw hit points / impact normals
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug")
 	bool bDrawHits = true;
+	
+	// Draw rig root + emitter poses (if Rig is used)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug") bool bDrawRig = true;
+
+	// Draw small axes arrows for rig poses
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug") bool bDrawRigAxes = true;
+
+	// Visual size of rig points
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug") float RigPointSize = 12.f;
+
 };
 
 // Event-specific semantic tags (appended to HitTags depending on event type)

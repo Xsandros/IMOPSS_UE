@@ -4,6 +4,7 @@
 #include "Delivery/DeliveryEventContextV3.h"
 #include "Core/SpellGameplayTagsV3.h"
 #include "DrawDebugHelpers.h"
+#include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
 
 #include "Actions/SpellActionExecutorV3.h"
 #include "Stores/SpellTargetStoreV3.h"
@@ -175,6 +176,7 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, const FDeliv
 		FDeliveryEventContextV3 Ev;
 		Ev.Type = EDeliveryEventTypeV3::Started;
 		Ev.Handle = DeliveryCtx.Handle;
+		Ev.PrimitiveId = "P0";
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
 		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Started);
@@ -426,6 +428,7 @@ void UDeliveryDriver_MoverV3::EvaluateSweep(const FSpellExecContextV3& Ctx, cons
 		FDeliveryEventContextV3 Ev;
 		Ev.Type = EDeliveryEventTypeV3::Hit;
 		Ev.Handle = DeliveryCtx.Handle;
+		Ev.PrimitiveId = "P0";
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
 		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Hit);
@@ -495,6 +498,7 @@ void UDeliveryDriver_MoverV3::Stop(const FSpellExecContextV3& Ctx, EDeliveryStop
 			FDeliveryEventContextV3 Ev;
 			Ev.Type = EDeliveryEventTypeV3::Stopped;
 			Ev.Handle = DeliveryCtx.Handle;
+			Ev.PrimitiveId = "P0";
 			Ev.StopReminder = Reason; // matches your struct
 			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 			Ev.HitTags = DeliveryCtx.Spec.HitTags;

@@ -6,6 +6,7 @@
 #include "Core/SpellGameplayTagsV3.h"
 #include "Engine/OverlapResult.h"
 #include "DrawDebugHelpers.h"
+#include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
 
 #include "Engine/World.h"
 #include "Stores/SpellTargetStoreV3.h"
@@ -142,8 +143,21 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 			Stop(Ctx, EDeliveryStopReasonV3::DurationElapsed); 
 			return;
 		}
-	} const FTransform Xf = ResolveAttachTransform(Ctx);
-	const FVector Center = Xf.GetLocation();
+	} 
+	const FTransform Xf = ResolveAttachTransform(Ctx);
+	FVector Center = Xf.GetLocation();
+	FDeliveryRigEvalResultV3 RigOut;
+	if (!DeliveryCtx.Spec.Rig.IsEmpty())
+	{
+		FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
+		Center = RigOut.Root.Location;
+	}
+	else
+	{
+		const FTransform Xf = ResolveAttachTransform(Ctx);
+		Center = Xf.GetLocation();
+	}
+
 	float Radius = DeliveryCtx.Spec.Shape.Radius;
 
 	if (Radius <= 0.f)
@@ -267,6 +281,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 			FDeliveryEventContextV3 Ev;
 			Ev.Type = EDeliveryEventTypeV3::Enter;
 			Ev.Handle = DeliveryCtx.Handle;
+			Ev.PrimitiveId = "P0";
 			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 			Ev.HitTags = DeliveryCtx.Spec.HitTags;
 			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Enter);
@@ -304,6 +319,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 			FDeliveryEventContextV3 Ev;
 			Ev.Type = EDeliveryEventTypeV3::Exit;
 			Ev.Handle = DeliveryCtx.Handle;
+			Ev.PrimitiveId = "P0";
 			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 			Ev.HitTags = DeliveryCtx.Spec.HitTags;
 			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Exit);
@@ -338,6 +354,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		FDeliveryEventContextV3 Ev;
 		Ev.Type = EDeliveryEventTypeV3::Stay;
 		Ev.Handle = DeliveryCtx.Handle;
+		Ev.PrimitiveId = "P0";
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
 		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stay);
@@ -349,8 +366,9 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stay, Ev);
 	}
 
-	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field Eval: inside=%d enter=%d exit=%d stay=%d center=%s"),
-		NewActors.Num(), EnterCount, ExitCount, StayCount, *Center.ToString());
+	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field Eval: prim=%s inside=%d enter=%d exit=%d stay=%d center=%s"),
+		TEXT("P0"), NewActors.Num(), EnterCount, ExitCount, StayCount, *Center.ToString());
+
 
 	CurrentSet = MoveTemp(NewSet);
 }
@@ -371,6 +389,7 @@ void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, EDeliveryStop
 	FDeliveryEventContextV3 Ev;
 	Ev.Type = EDeliveryEventTypeV3::Stopped;
 	Ev.Handle = DeliveryCtx.Handle;
+	Ev.PrimitiveId = "P0";
 	Ev.StopReminder = Reason;
 	Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 	Ev.HitTags = DeliveryCtx.Spec.HitTags;

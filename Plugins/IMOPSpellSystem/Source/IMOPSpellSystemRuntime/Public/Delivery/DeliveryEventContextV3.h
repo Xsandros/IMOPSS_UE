@@ -44,7 +44,13 @@ struct FDeliveryEventContextV3
 	EDeliveryEventTypeV3 Type = EDeliveryEventTypeV3::Hit;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FDeliveryHandleV3 Handle;
+	FDeliveryHandleV3 Handle = {};
+
+	// Identifies which sub-primitive/node produced this event.
+	// For single-primitive deliveries, use a stable default like "P0".
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FName PrimitiveId = "P0";
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	EDeliveryStopReasonV3 StopReminder = EDeliveryStopReasonV3::Manual;

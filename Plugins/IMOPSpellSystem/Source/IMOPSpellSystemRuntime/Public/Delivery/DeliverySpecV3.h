@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "Delivery/DeliveryTypesV3.h"
+#include "Delivery/Rig/DeliveryRigV3.h"
 #include "DeliverySpecV3.generated.h"
 
 // Typed configs FIRST (UHT requires complete types in UPROPERTY)
@@ -158,8 +159,13 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FName DeliveryId = "Delivery";
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
 	FDeliveryAttachV3 Attach;
+
+	// Optional gameplay rig: if Nodes is empty, drivers will use Attach directly (backwards compatible).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	FDeliveryRigV3 Rig;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryShapeV3 Shape;

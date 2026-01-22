@@ -98,6 +98,7 @@ void UDeliveryDriver_FieldV3::Start(const FSpellExecContextV3& Ctx, const FDeliv
 	Ev.Handle = DeliveryCtx.Handle;
 	Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 	Ev.HitTags = DeliveryCtx.Spec.HitTags;
+	Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Started);
 	Ev.Caster = Ctx.Caster;
 
 	Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Started, Ev);
@@ -129,8 +130,19 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 	{
 		return;
 	}
-
-	const FTransform Xf = ResolveAttachTransform(Ctx);
+	const float MaxDur = DeliveryCtx.Spec.StopPolicy.MaxDuration;
+	if (MaxDur > 0.f)
+	{
+		const float Now = World->GetTimeSeconds(); 
+		const float Elapsed = Now - DeliveryCtx.StartTime; 
+		if (Elapsed >= MaxDur)
+		{
+			UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field AutoStop: Id=%s Inst=%d MaxDur=%.3f Elapsed=%.3f"), 
+				*DeliveryCtx.Handle.DeliveryId.ToString(), DeliveryCtx.Handle.InstanceIndex, MaxDur, Elapsed);
+			Stop(Ctx, EDeliveryStopReasonV3::DurationElapsed); 
+			return;
+		}
+	} const FTransform Xf = ResolveAttachTransform(Ctx);
 	const FVector Center = Xf.GetLocation();
 	float Radius = DeliveryCtx.Spec.Shape.Radius;
 
@@ -152,7 +164,6 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		DrawDebugSphere(World, Center, Radius, 16, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.25f);
 	}
 	
-	const float MaxDur = DeliveryCtx.Spec.StopPolicy.MaxDuration;
 	if (MaxDur > 0.f)
 	{
 		const float Now = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : DeliveryCtx.StartTime;
@@ -183,25 +194,16 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 	}
 
 	TArray<FOverlapResult> Overlaps;
-	const bool bAny = World->OverlapMultiByProfile(
-		Overlaps,
-		Center,
-		FQuat::Identity,
-		DeliveryCtx.Spec.Query.CollisionProfile,
-		FCollisionShape::MakeSphere(Radius),
-		Params
-	);
-
-	if (bAny)
-	{
+	const bool bAny = World->OverlapMultiByProfile( Overlaps, Center, FQuat::Identity, DeliveryCtx.Spec.Query.CollisionProfile, FCollisionShape::MakeSphere(Radius), Params ); 
+	UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Query: profile=%s radius=%.1f ignoreCaster=%d raw=%d any=%d center=%s"), *DeliveryCtx.Spec.Query.CollisionProfile.ToString(), Radius, DeliveryCtx.Spec.Query.bIgnoreCaster ? 1 : 0, Overlaps.Num(), bAny ? 1 : 0, *Center.ToString());
+	if (bAny) 
+	{ 
 		for (const FOverlapResult& O : Overlaps)
 		{
-			if (AActor* A = O.GetActor())
-			{
-				NewSet.Add(A);
-			}
+			if (AActor* A = O.GetActor()) { NewSet.Add(A); }
 		}
 	}
+
 
 	// ================================
 	// Target writeback (Inside/Current -> TargetStore), deterministic order
@@ -239,10 +241,9 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 
 	TArray<AActor*> OldActors;
 	BuildSortedActorsDeterministic(CurrentSet, OldActors);
-
+	int32 EnterCount = 0; 
 	
 	// === Enter === (deterministic)
-	int32 EnterCount = 0;
 	if (DeliveryCtx.Spec.Field.bEmitEnterExit)
 	{
 		TArray<FDeliveryHitV3> EnterHits;
@@ -305,7 +306,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 			Ev.Handle = DeliveryCtx.Handle;
 			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 			Ev.HitTags = DeliveryCtx.Spec.HitTags;
-			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stay);
+			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Exit);
 			Ev.Caster = Ctx.Caster;
 			Ev.Hits = MoveTemp(ExitHits);
 
@@ -339,7 +340,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		Ev.Handle = DeliveryCtx.Handle;
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
-		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Exit);
+		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stay);
 
 		Ev.Caster = Ctx.Caster;
 		Ev.Hits = MoveTemp(StayHits);
@@ -348,13 +349,8 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stay, Ev);
 	}
 
-	UE_LOG(LogIMOPDeliveryFieldV3, Log,
-		TEXT("Field Eval: inside=%d enter=%d exit=%d stay=%d center=%s"),
-		NewActors.Num(),
-		EnterCount,
-		ExitCount,
-		StayCount,
-		*Center.ToString());
+	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field Eval: inside=%d enter=%d exit=%d stay=%d center=%s"),
+		NewActors.Num(), EnterCount, ExitCount, StayCount, *Center.ToString());
 
 	CurrentSet = MoveTemp(NewSet);
 }
@@ -378,6 +374,7 @@ void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, EDeliveryStop
 	Ev.StopReminder = Reason;
 	Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 	Ev.HitTags = DeliveryCtx.Spec.HitTags;
+	Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stopped);
 	Ev.Caster = Ctx.Caster;
 
 	UE_LOG(LogIMOPDeliveryFieldV3, Log,

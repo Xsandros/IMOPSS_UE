@@ -19,6 +19,25 @@ void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystemV3 Initialize (World=%s)"), *GetNameSafe(GetWorld()));
+	
+	if (UWorld* W = GetWorld())
+	{
+		if (UGameInstance* GI = W->GetGameInstance())
+		{
+			if (USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>())
+			{
+				const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+
+				FSpellTriggerMatcherV3 M;
+				M.bUseExactTag = true;
+				M.ExactTag = Tags.Event_Spell_End;
+
+				SpellEndSub = Bus->Subscribe(this, M);
+				UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystem: subscribed Spell.End (handle=%d)"), SpellEndSub.Id);
+			}
+		}
+	}
+
 }
 
 void UDeliverySubsystemV3::Deinitialize()
@@ -28,6 +47,28 @@ void UDeliverySubsystemV3::Deinitialize()
 	ActiveCtx.Empty();
 	NextInstanceByRuntimeAndId.Empty();
 	Super::Deinitialize();
+	if (UWorld* W = GetWorld())
+	{
+		if (UGameInstance* GI = W->GetGameInstance())
+		{
+			if (USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>())
+			{
+				if (SpellEndSub.IsValid())
+				{
+					Bus->Unsubscribe(SpellEndSub);
+				}
+				for (auto& It : StopTagSubs)
+				{
+					Bus->Unsubscribe(It.Value);
+				}
+			}
+		}
+	}
+
+	StopTagSubs.Empty();
+	StopByTag.Empty();
+	ActiveDelivery.Empty();
+
 }
 
 TStatId UDeliverySubsystemV3::GetStatId() const
@@ -153,6 +194,42 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	ActiveCtx.Add(Handle, Ctx);
 
 	OutHandle = Handle;
+	
+	ActiveDelivery.Add(Handle, Dctx);
+
+	// Register StopOnEventTag routing (subscribe once per tag)
+	if (Spec.StopPolicy.StopOnEventTag.IsValid())
+	{
+		StopByTag.FindOrAdd(Spec.StopPolicy.StopOnEventTag).Add(Handle);
+
+		// subscribe once per tag
+		if (!StopTagSubs.Contains(Spec.StopPolicy.StopOnEventTag))
+		{
+			if (UWorld* W = GetWorld())
+			{
+				if (UGameInstance* GI = W->GetGameInstance())
+				{
+					if (USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>())
+					{
+						FSpellTriggerMatcherV3 M;
+						M.bUseExactTag = true;
+						M.ExactTag = Spec.StopPolicy.StopOnEventTag;
+
+						FSpellEventSubscriptionHandleV3 HSub = Bus->Subscribe(this, M);
+						StopTagSubs.Add(Spec.StopPolicy.StopOnEventTag, HSub);
+
+						UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystem: subscribed StopOnEventTag=%s (handle=%d)"),
+							*Spec.StopPolicy.StopOnEventTag.ToString(), HSub.Id);
+					}
+				}
+			}
+		}
+
+		UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystem: StopOnEventTag mapped tag=%s -> Id=%s Inst=%d"),
+			*Spec.StopPolicy.StopOnEventTag.ToString(), *Handle.DeliveryId.ToString(), Handle.InstanceIndex);
+	}
+
+	
 	Driver->Start(Ctx, Dctx);
 	return true;
 
@@ -165,7 +242,20 @@ bool UDeliverySubsystemV3::StopDelivery(const FSpellExecContextV3& Ctx, const FD
 		UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StopDelivery: %s Inst=%d Reason=%d"), *Handle.DeliveryId.ToString(), Handle.InstanceIndex, (int32)Reason);
 		Driver->Stop(Ctx, Reason);
 		Active.Remove(Handle);
-		ActiveCtx.Remove(Handle);
+		// Cleanup stop-by-tag mapping
+		if (const FDeliveryContextV3* D = ActiveDelivery.Find(Handle))
+		{
+			const FGameplayTag StopTag = D->Spec.StopPolicy.StopOnEventTag;
+			if (StopTag.IsValid())
+			{
+				if (TArray<FDeliveryHandleV3>* Arr = StopByTag.Find(StopTag))
+				{
+					Arr->RemoveAll([&](const FDeliveryHandleV3& H) { return H == Handle; });
+				}
+			}
+		}
+		ActiveDelivery.Remove(Handle);
+
 		return true;
 
 	}
@@ -230,4 +320,78 @@ void UDeliverySubsystemV3::EmitDeliveryEvent(const FSpellExecContextV3& Ctx, con
 		Payload.Handle.InstanceIndex);
 
 	Ctx.EventBus->Emit(Ev);
+}
+
+void UDeliverySubsystemV3::StopAllForRuntime(const FSpellExecContextV3& Ctx, const FGuid& RuntimeGuid, EDeliveryStopReasonV3 Reason)
+{
+	TArray<FDeliveryHandleV3> Matches;
+	for (const auto& It : Active)
+	{
+		const FDeliveryHandleV3& H = It.Key;
+		if (H.RuntimeGuid == RuntimeGuid)
+		{
+			Matches.Add(H);
+		}
+	}
+
+	for (const FDeliveryHandleV3& H : Matches)
+	{
+		StopDelivery(Ctx, H, Reason);
+	}
+
+	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StopAllForRuntime: runtime=%s stopped=%d reason=%d"),
+		*RuntimeGuid.ToString(), Matches.Num(), (int32)Reason);
+}
+
+void UDeliverySubsystemV3::OnSpellEvent(const FSpellEventV3& Ev)
+{
+	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+
+	// Spell.End => stop all deliveries for that runtime
+	if (Ev.EventTag == Tags.Event_Spell_End)
+	{
+		// We need an exec ctx to stop drivers. Use stored ActiveCtx of any handle of that runtime.
+		for (const auto& It : ActiveCtx)
+		{
+			const FDeliveryHandleV3& H = It.Key;
+			if (H.RuntimeGuid == Ev.RuntimeGuid)
+			{
+				const FSpellExecContextV3& Ctx = It.Value;
+				UE_LOG(LogIMOPDeliveryV3, Log, TEXT("OnSpellEvent: Spell.End runtime=%s -> stopping deliveries"), *Ev.RuntimeGuid.ToString());
+				StopAllForRuntime(Ctx, Ev.RuntimeGuid, EDeliveryStopReasonV3::OwnerDestroyed);
+				break;
+			}
+		}
+		return;
+	}
+
+	// StopOnEventTag routing
+	if (TArray<FDeliveryHandleV3>* Arr = StopByTag.Find(Ev.EventTag))
+	{
+		// Snapshot because StopDelivery mutates maps
+		const TArray<FDeliveryHandleV3> Handles = *Arr;
+
+		int32 Stopped = 0;
+		for (const FDeliveryHandleV3& H : Handles)
+		{
+			if (H.RuntimeGuid != Ev.RuntimeGuid)
+			{
+				continue;
+			}
+
+			if (const FSpellExecContextV3* CtxPtr = ActiveCtx.Find(H))
+			{
+				if (StopDelivery(*CtxPtr, H, EDeliveryStopReasonV3::OnEvent))
+				{
+					Stopped++;
+				}
+			}
+		}
+
+		if (Stopped > 0)
+		{
+			UE_LOG(LogIMOPDeliveryV3, Log, TEXT("OnSpellEvent: StopOnEventTag=%s runtime=%s stopped=%d"),
+				*Ev.EventTag.ToString(), *Ev.RuntimeGuid.ToString(), Stopped);
+		}
+	}
 }

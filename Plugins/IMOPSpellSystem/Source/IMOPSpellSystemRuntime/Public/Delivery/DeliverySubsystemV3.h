@@ -6,6 +6,8 @@
 #include "Delivery/DeliverySpecV3.h"
 #include "Delivery/DeliveryContextV3.h"
 #include "Actions/SpellActionExecutorV3.h" // for FSpellExecContextV3 (USTRUCT, GC-safe snapshot)
+#include "Events/SpellEventListenerV3.h"
+#include "Events/SpellEventBusSubsystemV3.h"
 #include "DeliverySubsystemV3.generated.h"
 
 class UDeliveryDriverBaseV3;
@@ -13,7 +15,8 @@ class UDeliveryDriverBaseV3;
 DECLARE_LOG_CATEGORY_EXTERN(LogIMOPDeliveryV3, Log, All);
 
 UCLASS()
-class IMOPSPELLSYSTEMRUNTIME_API UDeliverySubsystemV3 : public UTickableWorldSubsystem
+class IMOPSPELLSYSTEMRUNTIME_API UDeliverySubsystemV3 : public UTickableWorldSubsystem, public ISpellEventListenerV3
+
 
 {
 	GENERATED_BODY()
@@ -25,6 +28,8 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool IsTickable() const override { return true; }
 	virtual TStatId GetStatId() const override;
+
+	virtual void OnSpellEvent(const FSpellEventV3& Ev) override;
 
 
 	bool StartDelivery(const FSpellExecContextV3& Ctx, const FDeliverySpecV3& Spec, FDeliveryHandleV3& OutHandle);
@@ -42,6 +47,16 @@ private:
 	// Ctx snapshot per active delivery (needed for ticking movers/fields; GC-safe because FSpellExecContextV3 is USTRUCT with UPROPERTYs)
 	UPROPERTY()
 	TMap<FDeliveryHandleV3, FSpellExecContextV3> ActiveCtx;
+
+	// Subscriptions
+	UPROPERTY() FSpellEventSubscriptionHandleV3 SpellEndSub;
+	UPROPERTY() TMap<FGameplayTag, FSpellEventSubscriptionHandleV3> StopTagSubs;
+
+	// Tag -> handles that should stop when that tag is emitted
+	TMap<FGameplayTag, TArray<FDeliveryHandleV3>> StopByTag;
+
+	// Keep a copy of delivery ctx/spec for cleanup & stop-by-tag logic
+	UPROPERTY() TMap<FDeliveryHandleV3, FDeliveryContextV3> ActiveDelivery;
 
 	
 	TMap<FGuid, TMap<FName, int32>> NextInstanceByRuntimeAndId;

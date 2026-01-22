@@ -1,6 +1,7 @@
 #include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
-
+#include "DrawDebugHelpers.h"
 #include "Stores/SpellTargetStoreV3.h"
+
 #include "Targeting/TargetingTypesV3.h"
 #include "GameFramework/Actor.h"
 
@@ -326,6 +327,38 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 			{
 				FRandomStream ER(R.GetCurrentSeed() ^ (e * 15485863));
 				ApplyDeterministicJitter(ER, OutResult.Emitters[e], N.JitterRadius, N.JitterYawDegrees);
+			}
+		}
+	}
+
+	// Debug draw (rig root + emitters)
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawRig)
+	{
+		if (UWorld* World = Ctx.GetWorld())
+		{
+			const float Dur = DeliveryCtx.Spec.DebugDraw.Duration;
+			const float Size = DeliveryCtx.Spec.DebugDraw.RigPointSize;
+
+			// Root point
+			DrawDebugSphere(World, OutResult.Root.Location, Size, 8, FColor::Cyan, false, Dur, 0, 0.0f);
+
+			// Emitters
+			for (int32 i = 0; i < OutResult.Emitters.Num(); i++)
+			{
+				const FDeliveryRigPoseV3& P = OutResult.Emitters[i];
+				DrawDebugSphere(World, P.Location, Size, 8, FColor::Yellow, false, Dur, 0, 0.0f);
+
+				if (DeliveryCtx.Spec.DebugDraw.bDrawRigAxes)
+				{
+					const FVector Dir = P.Rotation.Vector();
+					DrawDebugDirectionalArrow(World, P.Location, P.Location + Dir * (Size * 3.f), Size * 1.5f, FColor::Yellow, false, Dur, 0, 0.0f);
+				}
+			}
+
+			if (DeliveryCtx.Spec.DebugDraw.bDrawRigAxes)
+			{
+				const FVector Dir = OutResult.Root.Rotation.Vector();
+				DrawDebugDirectionalArrow(World, OutResult.Root.Location, OutResult.Root.Location + Dir * (Size * 3.f), Size * 1.5f, FColor::Cyan, false, Dur, 0, 0.0f);
 			}
 		}
 	}

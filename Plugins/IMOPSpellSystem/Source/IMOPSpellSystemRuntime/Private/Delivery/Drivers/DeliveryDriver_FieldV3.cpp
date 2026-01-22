@@ -144,7 +144,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 			return;
 		}
 	} 
-	const FTransform Xf = ResolveAttachTransform(Ctx);
+	FTransform Xf = ResolveAttachTransform(Ctx);
 	FVector Center = Xf.GetLocation();
 	FDeliveryRigEvalResultV3 RigOut;
 	if (!DeliveryCtx.Spec.Rig.IsEmpty())
@@ -154,7 +154,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 	}
 	else
 	{
-		const FTransform Xf = ResolveAttachTransform(Ctx);
+		Xf = ResolveAttachTransform(Ctx);
 		Center = Xf.GetLocation();
 	}
 

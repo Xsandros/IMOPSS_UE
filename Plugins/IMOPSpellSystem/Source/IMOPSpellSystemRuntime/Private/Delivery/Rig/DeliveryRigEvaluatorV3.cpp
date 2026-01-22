@@ -142,7 +142,8 @@ static void BuildOrbitEmitters(
 {
 	if (Count <= 0 || Radius <= 0.f) return;
 
-	const FVector N = Axis.GetSafeNormal(FVector::UpVector);
+	const FVector N = Axis.GetSafeNormal(UE_SMALL_NUMBER, FVector::UpVector);
+
 	// Build a basis in the plane perpendicular to N
 	FVector X = FVector::CrossProduct(N, FVector::ForwardVector);
 	if (X.IsNearlyZero())

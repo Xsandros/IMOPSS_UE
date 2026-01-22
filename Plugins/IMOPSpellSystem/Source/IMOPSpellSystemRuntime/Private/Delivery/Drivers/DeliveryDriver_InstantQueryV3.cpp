@@ -3,6 +3,7 @@
 #include "Delivery/DeliveryEventContextV3.h"
 #include "Delivery/DeliverySpecV3.h"
 #include "DrawDebugHelpers.h"
+#include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
 
 #include "Actions/SpellActionExecutorV3.h"
 #include "Core/SpellGameplayTagsV3.h"
@@ -114,10 +115,26 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 		return;
 	}
 
-	const FTransform OriginXf = ResolveAttachTransform(Ctx);
-	const FVector From = OriginXf.GetLocation();
-	const FVector Dir = OriginXf.GetRotation().GetForwardVector();
+	FVector From = FVector::ZeroVector;
+	FVector Dir  = FVector::ForwardVector;
+
+	// Prefer Rig pose if present (final: universal pose pipeline)
+	FDeliveryRigEvalResultV3 RigOut;
+	if (!DeliveryCtx.Spec.Rig.IsEmpty())
+	{
+		FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
+		From = RigOut.Root.Location;
+		Dir  = RigOut.Root.Rotation.Vector();
+	}
+	else
+	{
+		const FTransform OriginXf = ResolveAttachTransform(Ctx);
+		From = OriginXf.GetLocation();
+		Dir  = OriginXf.GetRotation().GetForwardVector();
+	}
+
 	const float Range = DeliveryCtx.Spec.InstantQuery.Range;
+
 
 	const FVector To = From + Dir * Range;
 

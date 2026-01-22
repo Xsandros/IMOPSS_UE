@@ -100,6 +100,7 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 		Ev.Handle = DeliveryCtx.Handle;
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
+		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Started);
 		Ev.Caster = Ctx.Caster;
 		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Started, Ev);
 	}
@@ -178,6 +179,8 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 		Ev.Handle = DeliveryCtx.Handle;
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
+		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Hit);
+
 		Ev.Caster = Ctx.Caster;
 
 		Ev.Hits.Reserve(Final.Num());
@@ -245,6 +248,7 @@ void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& Ctx, EDeliv
 		Ev.StopReminder = Reason;
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
+		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stopped);
 		Ev.Caster = Ctx.Caster;
 
 		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stopped, Ev);

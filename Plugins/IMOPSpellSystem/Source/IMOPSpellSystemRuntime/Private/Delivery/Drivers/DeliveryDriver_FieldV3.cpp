@@ -151,6 +151,27 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		// Field currently uses sphere overlap; draw sphere for visibility
 		DrawDebugSphere(World, Center, Radius, 16, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.25f);
 	}
+	
+	const float MaxDur = DeliveryCtx.Spec.StopPolicy.MaxDuration;
+	if (MaxDur > 0.f)
+	{
+		const float Now = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : DeliveryCtx.StartTime;
+		const float Elapsed = Now - DeliveryCtx.StartTime;
+
+		if (Elapsed >= MaxDur)
+		{
+			UE_LOG(LogIMOPDeliveryFieldV3, Log,
+				TEXT("Field AutoStop: Id=%s Inst=%d MaxDur=%.3f Elapsed=%.3f"),
+				*DeliveryCtx.Handle.DeliveryId.ToString(),
+				DeliveryCtx.Handle.InstanceIndex,
+				DeliveryCtx.Spec.StopPolicy.MaxDuration,
+				Elapsed);
+
+			Stop(Ctx, EDeliveryStopReasonV3::DurationElapsed);
+			return;
+		}
+	}
+
 
 	
 	TSet<TWeakObjectPtr<AActor>> NewSet;
@@ -247,6 +268,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 			Ev.Handle = DeliveryCtx.Handle;
 			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 			Ev.HitTags = DeliveryCtx.Spec.HitTags;
+			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Enter);
 			Ev.Caster = Ctx.Caster;
 			Ev.Hits = MoveTemp(EnterHits);
 
@@ -283,6 +305,7 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 			Ev.Handle = DeliveryCtx.Handle;
 			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 			Ev.HitTags = DeliveryCtx.Spec.HitTags;
+			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stay);
 			Ev.Caster = Ctx.Caster;
 			Ev.Hits = MoveTemp(ExitHits);
 
@@ -316,6 +339,8 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 		Ev.Handle = DeliveryCtx.Handle;
 		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
 		Ev.HitTags = DeliveryCtx.Spec.HitTags;
+		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Exit);
+
 		Ev.Caster = Ctx.Caster;
 		Ev.Hits = MoveTemp(StayHits);
 

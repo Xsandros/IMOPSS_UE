@@ -131,6 +131,22 @@ struct FDeliveryDebugDrawConfigV3
 	bool bDrawHits = true;
 };
 
+// Event-specific semantic tags (appended to HitTags depending on event type)
+USTRUCT(BlueprintType)
+struct FDeliveryEventHitTagsV3
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Started;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Stopped;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Hit;   // InstantQuery/Mover
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Enter; // Field/Beam
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Stay;  // Field/Beam
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Exit;  // Field/Beam
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Tick;  // optional heartbeat
+};
+
 USTRUCT(BlueprintType)
 struct FDeliverySpecV3
 {
@@ -157,20 +173,19 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
 	FDeliveryDebugDrawConfigV3 DebugDraw;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
-	FGameplayTagContainer DeliveryTags;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FGameplayTagContainer DeliveryTags;
 
+	// Base semantic tags forwarded into DeliveryEventContextV3.HitTags for all events
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FGameplayTagContainer HitTags;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FGameplayTagContainer HitTags;
-	
-	// Optional: write resulting hit targets into TargetStore under this key (so Effects can consume it)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FName OutTargetSet = "Targets";
+	// Additional per-event semantic tags (appended depending on event type)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FDeliveryEventHitTagsV3 EventHitTags;
 
+	// Writeback: delivery can write hit/inside targets into TargetStore for downstream Effects
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FName OutTargetSet = "Targets";
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FDeliveryInstantQueryConfigV3 InstantQuery;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FDeliveryInstantQueryConfigV3 InstantQuery;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryFieldConfigV3 Field;

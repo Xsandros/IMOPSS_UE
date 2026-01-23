@@ -138,12 +138,13 @@ static void BuildOrbitEmitters(
 	int32 Count,
 	float Radius,
 	float PhaseDeg,
+	float AngularSpeedDegPerSec,
+	float ElapsedSeconds,
 	const FVector& Axis,
 	int32 BaseSpawnSlot,
 	bool bSlotByIndex,
 	int32 SlotModulo,
 	TArray<FDeliveryRigEmitterV3>& OutEmitters)
-
 {
 	if (Count <= 0 || Radius <= 0.f) return;
 
@@ -343,16 +344,17 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 		if (N.Kind == EDeliveryRigNodeKindV3::OrbitSampler && N.OrbitCount > 0 && N.OrbitRadius > 0.f)
 		{
 			BuildOrbitEmitters(
-	OutResult.Root,
-	N.OrbitCount,
-	N.OrbitRadius,
-	N.OrbitPhaseDegrees,
-	N.OrbitAxis,
-	N.SpawnSlot,
-	N.bOrbitSlotByIndex,
-	N.OrbitSlotModulo,
-	OutResult.Emitters);
-
+				OutResult.Root,
+				N.OrbitCount,
+				N.OrbitRadius,
+				N.OrbitPhaseDegrees,
+				N.OrbitAngularSpeedDegPerSec,
+				ElapsedSeconds,
+				N.OrbitAxis,
+				N.SpawnSlot,
+				N.bOrbitSlotByIndex,
+				N.OrbitSlotModulo,
+				OutResult.Emitters);
 			break;
 		}
 	}
@@ -375,7 +377,7 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 			for (int32 e = 0; e < OutResult.Emitters.Num(); e++)
 			{
 				FRandomStream ER(R.GetCurrentSeed() ^ (e * 15485863));
-				ApplyDeterministicJitter(ER, OutResult.Emitters[e], N.JitterRadius, N.JitterYawDegrees);
+				ApplyDeterministicJitter(ER, OutResult.Emitters[e].Pose, N.JitterRadius, N.JitterYawDegrees);
 			}
 		}
 	}
@@ -394,7 +396,7 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 			// Emitters
 			for (int32 i = 0; i < OutResult.Emitters.Num(); i++)
 			{
-				const FDeliveryRigPoseV3& P = OutResult.Emitters[i];
+				const FDeliveryRigPoseV3& P = OutResult.Emitters[i].Pose;
 				DrawDebugSphere(World, P.Location, Size, 8, FColor::Yellow, false, Dur, 0, 0.0f);
 
 				if (DeliveryCtx.Spec.DebugDraw.bDrawRigAxes)

@@ -41,8 +41,6 @@ struct FDeliveryRigEvalResultV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	TArray<FDeliveryRigEmitterV3> Emitters;
-
-
 };
 
 struct IMOPSPELLSYSTEMRUNTIME_API FDeliveryRigEvaluatorV3

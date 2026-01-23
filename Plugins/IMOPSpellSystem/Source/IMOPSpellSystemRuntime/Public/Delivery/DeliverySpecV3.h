@@ -158,6 +158,81 @@ struct FDeliveryEventHitTagsV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|EventTags") FGameplayTagContainer Tick;  // optional heartbeat
 };
 
+// Per-emitter/per-instance overrides (index == EmitterIndex when Rig produces Emitters).
+// This enables "one StartDelivery -> N different instances" deterministically.
+USTRUCT(BlueprintType)
+struct FDeliveryInstanceOverrideV3
+{
+	GENERATED_BODY()
+
+	// If true, override Kind for this instance (allows mixing primitives within one start).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideKind = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideKind"))
+	EDeliveryKindV3 Kind = EDeliveryKindV3::InstantQuery;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideShape = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideShape"))
+	FDeliveryShapeV3 Shape;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideQuery = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideQuery"))
+	FDeliveryQueryPolicyV3 Query;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideStopPolicy = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideStopPolicy"))
+	FDeliveryStopPolicyV3 StopPolicy;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideOutTargetSet = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideOutTargetSet"))
+	FName OutTargetSet = NAME_None;
+
+	// Tag modifiers: appended to base tags
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	FGameplayTagContainer AddDeliveryTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	FGameplayTagContainer AddHitTags;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	FDeliveryEventHitTagsV3 AddEventHitTags;
+
+	// Optional typed config overrides (only meaningful if Kind matches)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideInstantQuery = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideInstantQuery"))
+	FDeliveryInstantQueryConfigV3 InstantQuery;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideField = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideField"))
+	FDeliveryFieldConfigV3 Field;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideMover = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideMover"))
+	FDeliveryMoverConfigV3 Mover;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides")
+	bool bOverrideBeam = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Overrides", meta=(EditCondition="bOverrideBeam"))
+	FDeliveryBeamConfigV3 Beam;
+};
+
+
 USTRUCT(BlueprintType)
 struct FDeliverySpecV3
 {
@@ -197,18 +272,34 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
 	FDeliveryDebugDrawConfigV3 DebugDraw;
 	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FGameplayTagContainer DeliveryTags;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	FGameplayTagContainer DeliveryTags;
 
 	// Base semantic tags forwarded into DeliveryEventContextV3.HitTags for all events
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FGameplayTagContainer HitTags;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	FGameplayTagContainer HitTags;
 
 	// Additional per-event semantic tags (appended depending on event type)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FDeliveryEventHitTagsV3 EventHitTags;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	FDeliveryEventHitTagsV3 EventHitTags;
 
 	// Writeback: delivery can write hit/inside targets into TargetStore for downstream Effects
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FName OutTargetSet = "Targets";
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	FName OutTargetSet = "Targets";
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") FDeliveryInstantQueryConfigV3 InstantQuery;
+	// Optional per-emitter overrides. Array index corresponds to EmitterIndex when Rig produces Emitters.
+	// If Rig produces N emitters and Overrides has >= N entries, each instance i uses Overrides[i].
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	TArray<FDeliveryInstanceOverrideV3> InstanceOverrides;
+
+	// Optional overrides addressed by rig SpawnSlot.
+	// SlotOverrides[SpawnSlot] is applied first, then InstanceOverrides[EmitterIndex].
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	TArray<FDeliveryInstanceOverrideV3> SlotOverrides;
+
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	FDeliveryInstantQueryConfigV3 InstantQuery;
 
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")

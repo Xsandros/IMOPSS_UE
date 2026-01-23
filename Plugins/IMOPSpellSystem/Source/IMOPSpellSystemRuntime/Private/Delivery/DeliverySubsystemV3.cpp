@@ -181,7 +181,6 @@ void UDeliverySubsystemV3::Tick(float DeltaSeconds)
 
 }
 
-
 int32 UDeliverySubsystemV3::AllocateInstanceIndex(const FGuid& RuntimeGuid, FName DeliveryId)
 {
 	int32& Next = NextInstanceByRuntimeAndId.FindOrAdd(RuntimeGuid).FindOrAdd(DeliveryId);
@@ -206,6 +205,48 @@ TObjectPtr<UDeliveryDriverBaseV3> UDeliverySubsystemV3::CreateDriverForKind(EDel
 	}
 }
 
+static void ApplyInstanceOverride(FDeliverySpecV3& InOutSpec, const FDeliveryInstanceOverrideV3& Ovr)
+{
+	if (Ovr.bOverrideKind)
+	{
+		InOutSpec.Kind = Ovr.Kind;
+	}
+	if (Ovr.bOverrideShape)
+	{
+		InOutSpec.Shape = Ovr.Shape;
+	}
+	if (Ovr.bOverrideQuery)
+	{
+		InOutSpec.Query = Ovr.Query;
+	}
+	if (Ovr.bOverrideStopPolicy)
+	{
+		InOutSpec.StopPolicy = Ovr.StopPolicy;
+	}
+	if (Ovr.bOverrideOutTargetSet && Ovr.OutTargetSet != NAME_None)
+	{
+		InOutSpec.OutTargetSet = Ovr.OutTargetSet;
+	}
+
+	// Append tag modifiers
+	InOutSpec.DeliveryTags.AppendTags(Ovr.AddDeliveryTags);
+	InOutSpec.HitTags.AppendTags(Ovr.AddHitTags);
+
+	InOutSpec.EventHitTags.Started.AppendTags(Ovr.AddEventHitTags.Started);
+	InOutSpec.EventHitTags.Stopped.AppendTags(Ovr.AddEventHitTags.Stopped);
+	InOutSpec.EventHitTags.Hit.AppendTags(Ovr.AddEventHitTags.Hit);
+	InOutSpec.EventHitTags.Enter.AppendTags(Ovr.AddEventHitTags.Enter);
+	InOutSpec.EventHitTags.Stay.AppendTags(Ovr.AddEventHitTags.Stay);
+	InOutSpec.EventHitTags.Exit.AppendTags(Ovr.AddEventHitTags.Exit);
+	InOutSpec.EventHitTags.Tick.AppendTags(Ovr.AddEventHitTags.Tick);
+
+	// Typed config overrides
+	if (Ovr.bOverrideInstantQuery) { InOutSpec.InstantQuery = Ovr.InstantQuery; }
+	if (Ovr.bOverrideField)       { InOutSpec.Field       = Ovr.Field; }
+	if (Ovr.bOverrideMover)       { InOutSpec.Mover       = Ovr.Mover; }
+	if (Ovr.bOverrideBeam)        { InOutSpec.Beam        = Ovr.Beam; }
+}
+
 bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const FDeliverySpecV3& Spec, FDeliveryHandleV3& OutHandle)
 {
 	OutHandle = FDeliveryHandleV3();
@@ -227,8 +268,8 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	}
 
 	const FGuid RuntimeGuid = Ctx.Runtime->GetRuntimeGuid();
-
-	// Evaluate rig once to see if we have multi-emitters (OrbitSampler etc.)
+	FDeliveryRigEvalResultV3 RigOut;
+	// Determine emitter count once (for multi-instance spawn)
 	int32 EmitterCount = 0;
 	if (!Spec.Rig.IsEmpty())
 	{
@@ -241,59 +282,106 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Temp.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
 		Temp.Seed = HashCombine(Ctx.Seed, GetTypeHash(Spec.DeliveryId));
 		Temp.EmitterIndex = INDEX_NONE;
-
-		FDeliveryRigEvalResultV3 RigOut;
+		
 		FDeliveryRigEvaluatorV3::Evaluate(Ctx, Temp, Spec.Rig, RigOut);
 		EmitterCount = RigOut.Emitters.Num();
 	}
 
-	// Spawn either 1 instance (no emitters) or N instances (one per emitter)
 	const int32 SpawnCount = (EmitterCount > 0) ? EmitterCount : 1;
+
 	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StartDelivery: Kind=%d Id=%s Runtime=%s Emitters=%d -> Spawn=%d"),
 		(int32)Spec.Kind, *Spec.DeliveryId.ToString(), *RuntimeGuid.ToString(), EmitterCount, SpawnCount);
 
 	FDeliveryHandleV3 FirstHandle;
 
-	for (int32 i = 0; i < SpawnCount; i++)
+	for (int32 EmitterIndex = 0; EmitterIndex < SpawnCount; EmitterIndex++)
 	{
-		const int32 InstanceIndex = AllocateInstanceIndex(RuntimeGuid, Spec.DeliveryId);
+		// Copy base spec and apply instance override if present
+		FDeliverySpecV3 SpecInst = Spec;
+		
+		int32 SpawnSlot = 0;
+		if (EmitterCount > 0 && RigOut.Emitters.IsValidIndex(EmitterIndex))
+		{
+			SpawnSlot = RigOut.Emitters[EmitterIndex].SpawnSlot;
+		}
+
+		// Apply Slot override first (SpawnGraph mapping)
+		if (SpecInst.SlotOverrides.IsValidIndex(SpawnSlot))
+		{
+			ApplyInstanceOverride(SpecInst, SpecInst.SlotOverrides[SpawnSlot]);
+		}
+
+		// Apply per-emitter override second (fine-grained)
+		if (SpecInst.InstanceOverrides.IsValidIndex(EmitterIndex))
+		{
+			ApplyInstanceOverride(SpecInst, SpecInst.InstanceOverrides[EmitterIndex]);
+		}
+
+		
+		const int32 InstanceIndex = AllocateInstanceIndex(RuntimeGuid, SpecInst.DeliveryId);
 
 		FDeliveryHandleV3 Handle;
 		Handle.RuntimeGuid = RuntimeGuid;
-		Handle.DeliveryId = Spec.DeliveryId;
+		Handle.DeliveryId = SpecInst.DeliveryId;
 		Handle.InstanceIndex = InstanceIndex;
 
-		const int32 Seed = HashCombine(Ctx.Seed, HashCombine(GetTypeHash(Spec.DeliveryId), HashCombine(InstanceIndex, i)));
+		const int32 Seed = HashCombine(Ctx.Seed, HashCombine(GetTypeHash(SpecInst.DeliveryId), HashCombine(InstanceIndex, EmitterIndex)));
 
 		FDeliveryContextV3 Dctx;
 		Dctx.Handle = Handle;
-		Dctx.Spec = Spec;
+		Dctx.Spec = SpecInst;
 		Dctx.Caster = Ctx.Caster;
 		Dctx.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
 		Dctx.Seed = Seed;
+		Dctx.EmitterIndex = (EmitterCount > 0) ? EmitterIndex : INDEX_NONE;
 
-		// If rig had emitters, bind this instance to a specific emitter index
-		Dctx.EmitterIndex = (EmitterCount > 0) ? i : INDEX_NONE;
-
-		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(Spec.Kind).Get();
+		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(SpecInst.Kind).Get();
 		if (!Driver)
 		{
-			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery failed: driver create failed (Kind=%d)"), (int32)Spec.Kind);
-			// Stop already started instances for robustness
+			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery failed: driver create failed (Kind=%d)"), (int32)SpecInst.Kind);
 			if (FirstHandle.IsValid())
 			{
-				StopById(Ctx, Spec.DeliveryId, EDeliveryStopReasonV3::Failed);
+				StopById(Ctx, SpecInst.DeliveryId, EDeliveryStopReasonV3::Failed);
 			}
 			return false;
 		}
 
 		Active.Add(Handle, Driver);
 		ActiveCtx.Add(Handle, Ctx);
-		// Optional: if you maintain ActiveDelivery map, keep it in sync (safe even if map exists)
 		ActiveDelivery.Add(Handle, Dctx);
 
-		UE_LOG(LogIMOPDeliveryV3, Verbose, TEXT("StartDelivery Instance: Id=%s Inst=%d Seed=%d EmitterIndex=%d"),
-			*Handle.DeliveryId.ToString(), Handle.InstanceIndex, Seed, Dctx.EmitterIndex);
+		UE_LOG(LogIMOPDeliveryV3, Verbose, TEXT("StartDelivery Instance: Id=%s Inst=%d Seed=%d EmitterIndex=%d Slot=%d Kind=%d OutSet=%s"),
+	*Handle.DeliveryId.ToString(), Handle.InstanceIndex, Seed, Dctx.EmitterIndex, SpawnSlot, (int32)SpecInst.Kind, *SpecInst.OutTargetSet.ToString());
+
+
+		// Register StopOnEventTag routing (subscribe once per tag)
+		if (SpecInst.StopPolicy.StopOnEventTag.IsValid())
+		{
+			StopByTag.FindOrAdd(SpecInst.StopPolicy.StopOnEventTag).Add(Handle);
+
+			if (!StopTagSubs.Contains(SpecInst.StopPolicy.StopOnEventTag))
+			{
+				if (UWorld* W = GetWorld())
+				{
+					if (UGameInstance* GI = W->GetGameInstance())
+					{
+						if (USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>())
+						{
+							FSpellTriggerMatcherV3 M;
+							M.bUseExactTag = true;
+							M.ExactTag = SpecInst.StopPolicy.StopOnEventTag;
+							FSpellEventSubscriptionHandleV3 HSub = Bus->Subscribe(this, M);
+							StopTagSubs.Add(SpecInst.StopPolicy.StopOnEventTag, HSub);
+							UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystem: subscribed StopOnEventTag=%s (handle=%d)"),
+								*SpecInst.StopPolicy.StopOnEventTag.ToString(), HSub.Id);
+						}
+					}
+				}
+			}
+
+			UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystem: StopOnEventTag mapped tag=%s -> Id=%s Inst=%d"),
+				*SpecInst.StopPolicy.StopOnEventTag.ToString(), *Handle.DeliveryId.ToString(), Handle.InstanceIndex);
+		}
 
 		Driver->Start(Ctx, Dctx);
 
@@ -306,7 +394,6 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	OutHandle = FirstHandle;
 	return true;
 }
-
 
 bool UDeliverySubsystemV3::StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason)
 {

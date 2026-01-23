@@ -89,5 +89,18 @@ struct FDeliveryRigNodeV3
 	// RotateOverTime params (degrees per second)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	FRotator RotationRateDegPerSec = FRotator::ZeroRotator;
+	
+	// Spawn slot used by this node when producing emitters.
+	// DeliverySubsystem can map SpawnSlot -> SlotOverrides[] to vary kind/shape/tags/config per emitter.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	int32 SpawnSlot = 0;
 
+	// If true, orbit emitters will cycle spawn slots: Slot = SpawnSlot + (i % OrbitSlotModulo)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	bool bOrbitSlotByIndex = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="bOrbitSlotByIndex"))
+	int32 OrbitSlotModulo = 0; // 0 => disabled
+
+	
 };

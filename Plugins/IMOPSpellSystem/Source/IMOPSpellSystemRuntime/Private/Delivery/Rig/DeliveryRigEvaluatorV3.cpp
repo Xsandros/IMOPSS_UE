@@ -138,10 +138,12 @@ static void BuildOrbitEmitters(
 	int32 Count,
 	float Radius,
 	float PhaseDeg,
-	float AngularSpeedDegPerSec,
-	float ElapsedSeconds,
 	const FVector& Axis,
-	TArray<FDeliveryRigPoseV3>& OutEmitters)
+	int32 BaseSpawnSlot,
+	bool bSlotByIndex,
+	int32 SlotModulo,
+	TArray<FDeliveryRigEmitterV3>& OutEmitters)
+
 {
 	if (Count <= 0 || Radius <= 0.f) return;
 
@@ -169,10 +171,19 @@ static void BuildOrbitEmitters(
 
 		const FVector Offset = (FMath::Cos(A) * X + FMath::Sin(A) * Y) * Radius;
 
-		FDeliveryRigPoseV3 P;
-		P.Location = Root.Location + Offset;
-		P.Rotation = Root.Rotation;
-		OutEmitters.Add(P);
+		FDeliveryRigEmitterV3 E;
+		E.Pose.Location = Root.Location + Offset;
+		E.Pose.Rotation = Root.Rotation;
+
+		int32 Slot = BaseSpawnSlot;
+		if (bSlotByIndex && SlotModulo > 0)
+		{
+			Slot = BaseSpawnSlot + (i % SlotModulo);
+		}
+		E.SpawnSlot = Slot;
+
+		OutEmitters.Add(E);
+
 	}
 }
 
@@ -331,7 +342,17 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 		const FDeliveryRigNodeV3& N = Rig.Nodes[i];
 		if (N.Kind == EDeliveryRigNodeKindV3::OrbitSampler && N.OrbitCount > 0 && N.OrbitRadius > 0.f)
 		{
-			BuildOrbitEmitters(OutResult.Root, N.OrbitCount, N.OrbitRadius, N.OrbitPhaseDegrees, N.OrbitAngularSpeedDegPerSec, ElapsedSeconds, N.OrbitAxis, OutResult.Emitters);
+			BuildOrbitEmitters(
+	OutResult.Root,
+	N.OrbitCount,
+	N.OrbitRadius,
+	N.OrbitPhaseDegrees,
+	N.OrbitAxis,
+	N.SpawnSlot,
+	N.bOrbitSlotByIndex,
+	N.OrbitSlotModulo,
+	OutResult.Emitters);
+
 			break;
 		}
 	}

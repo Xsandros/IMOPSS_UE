@@ -19,6 +19,19 @@ struct FDeliveryRigPoseV3
 };
 
 USTRUCT(BlueprintType)
+struct FDeliveryRigEmitterV3
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	FDeliveryRigPoseV3 Pose;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	int32 SpawnSlot = 0;
+};
+
+
+USTRUCT(BlueprintType)
 struct FDeliveryRigEvalResultV3
 {
 	GENERATED_BODY()
@@ -26,9 +39,9 @@ struct FDeliveryRigEvalResultV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	FDeliveryRigPoseV3 Root;
 
-	// Optional multi-emitter poses (e.g., OrbitSampler)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	TArray<FDeliveryRigPoseV3> Emitters;
+	TArray<FDeliveryRigEmitterV3> Emitters;
+
 
 };
 

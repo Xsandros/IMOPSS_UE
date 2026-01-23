@@ -84,6 +84,14 @@ struct IMOPSPELLSYSTEMRUNTIME_API FIMOPSpellGameplayTagsV3
 	FGameplayTag Event_Delivery_Stay;
 	FGameplayTag Event_Delivery_Exit;
 	FGameplayTag Event_Delivery_Tick;
+	// Delivery primitive events (per spawned primitive / emitter instance)
+	FGameplayTag Event_Delivery_Primitive_Started;
+	FGameplayTag Event_Delivery_Primitive_Stopped;
+	FGameplayTag Event_Delivery_Primitive_Hit;
+	FGameplayTag Event_Delivery_Primitive_Enter;
+	FGameplayTag Event_Delivery_Primitive_Stay;
+	FGameplayTag Event_Delivery_Primitive_Exit;
+	FGameplayTag Event_Delivery_Primitive_Tick;
 
 private:
 	void Initialize();

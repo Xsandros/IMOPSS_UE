@@ -86,7 +86,14 @@ void FIMOPSpellGameplayTagsV3::Initialize()
 	Event_Delivery_Stay    = RequestTagChecked(TEXT("Spell.Event.Delivery.Stay"));
 	Event_Delivery_Exit    = RequestTagChecked(TEXT("Spell.Event.Delivery.Exit"));
 	Event_Delivery_Tick    = RequestTagChecked(TEXT("Spell.Event.Delivery.Tick"));
-
+	
+	Event_Delivery_Primitive_Started = RequestTagChecked(TEXT("Spell.Event.Delivery.Primitive.Started"));
+	Event_Delivery_Primitive_Stopped = RequestTagChecked(TEXT("Spell.Event.Delivery.Primitive.Stopped"));
+	Event_Delivery_Primitive_Hit     = RequestTagChecked(TEXT("Spell.Event.Delivery.Primitive.Hit"));
+	Event_Delivery_Primitive_Enter   = RequestTagChecked(TEXT("Spell.Event.Delivery.Primitive.Enter"));
+	Event_Delivery_Primitive_Stay    = RequestTagChecked(TEXT("Spell.Event.Delivery.Primitive.Stay"));
+	Event_Delivery_Primitive_Exit    = RequestTagChecked(TEXT("Spell.Event.Delivery.Primitive.Exit"));
+	Event_Delivery_Primitive_Tick    = RequestTagChecked(TEXT("Spell.Event.Delivery.Primitive.Tick"));
 }
 
 

@@ -534,18 +534,11 @@ void UDeliverySubsystemV3::EmitDeliveryEvent(const FSpellExecContextV3& Ctx, con
 		return;
 	}
 
-	FSpellEventV3 Ev;
-	Ev.EventTag = EventTag;
-	Ev.Caster = Ctx.Caster;
-	Ev.Sender = this;
-	Ev.FrameNumber = GFrameNumber;
-	Ev.TimeSeconds = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
-	Ev.RuntimeGuid = Ctx.Runtime ? Ctx.Runtime->GetRuntimeGuid() : FGuid();
+	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
 
+	// ---- Fix payload first (PrimitiveId etc.) ----
 	FDeliveryEventContextV3 PayloadFixed = Payload;
-	Ev.Data.InitializeAs<FDeliveryEventContextV3>(PayloadFixed);
-	
-	
+
 	if (PayloadFixed.PrimitiveId.IsNone())
 	{
 		// If caller didn’t set it, derive from active delivery ctx.
@@ -559,15 +552,58 @@ void UDeliverySubsystemV3::EmitDeliveryEvent(const FSpellExecContextV3& Ctx, con
 		}
 	}
 
-	
-	
-	UE_LOG(LogIMOPDeliveryV3, Verbose, TEXT("EmitDeliveryEvent: %s Hits=%d Id=%s Inst=%d"),
+	// ---- Emit normal delivery event (existing behavior) ----
+	FSpellEventV3 Ev;
+	Ev.EventTag = EventTag;
+	Ev.Caster = Ctx.Caster;
+	Ev.Sender = this;
+	Ev.FrameNumber = GFrameNumber;
+	Ev.TimeSeconds = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
+	Ev.RuntimeGuid = Ctx.Runtime ? Ctx.Runtime->GetRuntimeGuid() : FGuid();
+
+	Ev.Data.InitializeAs<FDeliveryEventContextV3>(PayloadFixed);
+
+	UE_LOG(LogIMOPDeliveryV3, Verbose,
+		TEXT("EmitDeliveryEvent: %s Hits=%d Id=%s Inst=%d PrimitiveId=%s Stop=%d"),
 		*EventTag.ToString(),
-		Payload.Hits.Num(),
-		*Payload.Handle.DeliveryId.ToString(),
-		Payload.Handle.InstanceIndex);
+		PayloadFixed.Hits.Num(),
+		*PayloadFixed.Handle.DeliveryId.ToString(),
+		PayloadFixed.Handle.InstanceIndex,
+		*PayloadFixed.PrimitiveId.ToString(),
+		(int32)PayloadFixed.StopReminder);
 
 	Ctx.EventBus->Emit(Ev);
+
+	// ---- Emit additional per-primitive event tag ----
+	FGameplayTag PrimitiveTag;
+	switch (PayloadFixed.Type)
+	{
+	case EDeliveryEventTypeV3::Started: PrimitiveTag = Tags.Event_Delivery_Primitive_Started; break;
+	case EDeliveryEventTypeV3::Stopped: PrimitiveTag = Tags.Event_Delivery_Primitive_Stopped; break;
+	case EDeliveryEventTypeV3::Hit:     PrimitiveTag = Tags.Event_Delivery_Primitive_Hit; break;
+	case EDeliveryEventTypeV3::Enter:   PrimitiveTag = Tags.Event_Delivery_Primitive_Enter; break;
+	case EDeliveryEventTypeV3::Stay:    PrimitiveTag = Tags.Event_Delivery_Primitive_Stay; break;
+	case EDeliveryEventTypeV3::Exit:    PrimitiveTag = Tags.Event_Delivery_Primitive_Exit; break;
+	case EDeliveryEventTypeV3::Tick:    PrimitiveTag = Tags.Event_Delivery_Primitive_Tick; break;
+	default: break;
+	}
+
+	if (PrimitiveTag.IsValid())
+	{
+		FSpellEventV3 Ev2 = Ev;
+		Ev2.EventTag = PrimitiveTag;
+
+		UE_LOG(LogIMOPDeliveryV3, Verbose,
+			TEXT("EmitDeliveryEvent: %s Hits=%d Id=%s Inst=%d PrimitiveId=%s Stop=%d"),
+			*PrimitiveTag.ToString(),
+			PayloadFixed.Hits.Num(),
+			*PayloadFixed.Handle.DeliveryId.ToString(),
+			PayloadFixed.Handle.InstanceIndex,
+			*PayloadFixed.PrimitiveId.ToString(),
+			(int32)PayloadFixed.StopReminder);
+
+		Ctx.EventBus->Emit(Ev2);
+	}
 }
 
 void UDeliverySubsystemV3::StopAllForRuntime(const FSpellExecContextV3& Ctx, const FGuid& RuntimeGuid, EDeliveryStopReasonV3 Reason)

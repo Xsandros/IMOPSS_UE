@@ -35,8 +35,20 @@ static void ApplyLocalOffsetRotation(FDeliveryRigPoseV3& Pose, const FVector& Of
 {
 	const FRotationMatrix M(Pose.Rotation);
 	Pose.Location += M.TransformVector(Offset);
+
 	Pose.Rotation = (Pose.Rotation + Rot).GetNormalized();
+
+	// Keep explicit forward consistent with rotation changes
+	if (!Pose.Forward.IsNearlyZero())
+	{
+		Pose.Forward = FQuat(Rot).RotateVector(Pose.Forward).GetSafeNormal();
+	}
+	else
+	{
+		Pose.Forward = Pose.Rotation.Vector();
+	}
 }
+
 
 static bool ResolveAttachPose(
 	const FSpellExecContextV3& Ctx,
@@ -54,13 +66,15 @@ static bool ResolveAttachPose(
 		const FTransform& T = Attach.WorldTransform;
 		OutPose.Location = T.GetLocation();
 		OutPose.Rotation = T.Rotator();
+			OutPose.Forward = OutPose.Rotation.Vector();		
 		return true;
 	}
 	case EDeliveryAttachKindV3::Caster:
 	{
-		if (!Caster) return false;
+		if (!Caster){ return false;}
 		OutPose.Location = Caster->GetActorLocation();
 		OutPose.Rotation = Caster->GetActorRotation();
+		OutPose.Forward = OutPose.Rotation.Vector();	
 		return true;
 	}
 	case EDeliveryAttachKindV3::TargetSet:
@@ -74,6 +88,7 @@ static bool ResolveAttachPose(
 			{
 				OutPose.Location = Caster->GetActorLocation();
 				OutPose.Rotation = Caster->GetActorRotation();
+				OutPose.Forward = OutPose.Rotation.Vector();	
 				return true;
 			}
 			return false;
@@ -90,6 +105,7 @@ static bool ResolveAttachPose(
 		{
 			OutPose.Location = Caster->GetActorLocation();
 			OutPose.Rotation = Caster->GetActorRotation();
+			OutPose.Forward = OutPose.Rotation.Vector();	
 			return true;
 		}
 
@@ -117,6 +133,7 @@ static bool ResolveAttachPose(
 				const FTransform T = Root->GetSocketTransform(Attach.SocketName);
 				OutPose.Location = T.GetLocation();
 				OutPose.Rotation = T.Rotator();
+				OutPose.Forward = OutPose.Rotation.Vector();	
 				return true;
 			}
 		}
@@ -179,6 +196,7 @@ static void BuildFanEmitters(
 		FDeliveryRigPoseV3 P;
 		P.Location = Root.Location + (Dir * Distance);
 		P.Rotation = Root.Rotation; // keep root rotation; dir is implicit in location
+		
 
 		int32 Slot = BaseSpawnSlot;
 		if (bSlotByIndex && SlotModulo > 0)
@@ -236,6 +254,8 @@ static void BuildScatterEmitters(
 		FDeliveryRigPoseV3 P;
 		P.Location = Root.Location + Root.Rotation.RotateVector(Local);
 		P.Rotation = Root.Rotation;
+		// Radial outward by default (useful for “ring projectiles / rays”)
+		P.Forward = Root.Rotation.Vector();
 
 		if (YawDegrees > 0.f)
 		{
@@ -362,6 +382,8 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 			RootPose.Rotation = FRotator::ZeroRotator;
 		}
 		OutResult.Root = RootPose;
+		OutResult.Root.Forward = OutResult.Root.Rotation.Vector();
+
 		return true;
 	}
 
@@ -601,4 +623,13 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 		*OutResult.Root.Location.ToString(), OutResult.Emitters.Num(), DeliveryCtx.Seed);
 
 	return true;
+}
+
+const FDeliveryRigPoseV3& FDeliveryRigPoseSelectorV3::SelectPose(const FDeliveryRigEvalResultV3& RigOut, int32 EmitterIndex)
+{
+	if (EmitterIndex >= 0 && RigOut.Emitters.IsValidIndex(EmitterIndex))
+	{
+		return RigOut.Emitters[EmitterIndex].Pose;
+	}
+	return RigOut.Root;
 }

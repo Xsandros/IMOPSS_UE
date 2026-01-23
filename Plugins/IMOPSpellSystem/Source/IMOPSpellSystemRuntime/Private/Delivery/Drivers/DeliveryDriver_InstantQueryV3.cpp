@@ -122,9 +122,9 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 	FDeliveryRigEvalResultV3 RigOut;
 	if (!DeliveryCtx.Spec.Rig.IsEmpty())
 	{
-		FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
-		From = RigOut.Root.Location;
-		Dir  = RigOut.Root.Rotation.Vector();
+		const FDeliveryRigPoseV3& P = FDeliveryRigPoseSelectorV3::SelectPose(RigOut, DeliveryCtx.EmitterIndex);
+		From = P.Location;
+		Dir  = (!P.Forward.IsNearlyZero() ? P.Forward : P.Rotation.Vector());
 	}
 	else
 	{

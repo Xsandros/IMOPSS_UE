@@ -144,12 +144,16 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, const FDeliv
 
 	FTransform StartXf = FTransform::Identity;
 
-	// Prefer Rig pose if present (time-aware pose pipeline)
+	FDeliveryRigEvalResultV3 RigOut;
+	bool bHasRig = false;
+
 	if (!DeliveryCtx.Spec.Rig.IsEmpty())
 	{
-		FDeliveryRigEvalResultV3 RigOut;
+		bHasRig = true;
 		FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
-		StartXf = FTransform(RigOut.Root.Rotation, RigOut.Root.Location);
+
+		const FDeliveryRigPoseV3& P = FDeliveryRigPoseSelectorV3::SelectPose(RigOut, DeliveryCtx.EmitterIndex);
+		StartXf = FTransform(P.Rotation, P.Location);
 	}
 	else
 	{
@@ -157,8 +161,19 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, const FDeliv
 	}
 
 	Position = StartXf.GetLocation();
-	const FVector Forward = StartXf.GetRotation().GetForwardVector();
+
+	FVector Forward = StartXf.GetRotation().GetForwardVector();
+	if (bHasRig)
+	{
+		const FDeliveryRigPoseV3& P = FDeliveryRigPoseSelectorV3::SelectPose(RigOut, DeliveryCtx.EmitterIndex);
+		if (!P.Forward.IsNearlyZero())
+		{
+			Forward = P.Forward.GetSafeNormal();
+		}
+	}
 	Velocity = Forward * FMath::Max(0.f, DeliveryCtx.Spec.Mover.Speed);
+
+
 
 
 	UE_LOG(LogIMOPDeliveryMoverV3, Log,
@@ -265,7 +280,8 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, float DeltaSe
 		{
 			FDeliveryRigEvalResultV3 RigOut;
 			FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
-			Position = RigOut.Root.Location;
+			const FDeliveryRigPoseV3& P = FDeliveryRigPoseSelectorV3::SelectPose(RigOut, DeliveryCtx.EmitterIndex);
+			Position = P.Location;
 		}
 		else
 		{

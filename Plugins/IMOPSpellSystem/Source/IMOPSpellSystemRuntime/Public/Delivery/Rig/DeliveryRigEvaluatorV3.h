@@ -16,7 +16,12 @@ struct FDeliveryRigPoseV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	FRotator Rotation = FRotator::ZeroRotator;
+
+	// Explicit direction for deliveries (trace / projectile heading). If zero, drivers may fallback to Rotation.Vector().
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	FVector Forward = FVector::ForwardVector;
 };
+
 
 USTRUCT(BlueprintType)
 struct FDeliveryRigEmitterV3
@@ -60,4 +65,9 @@ struct IMOPSPELLSYSTEMRUNTIME_API FDeliveryRigEvaluatorV3
 		const FDeliveryRigV3& Rig,
 		float NowSeconds,
 		FDeliveryRigEvalResultV3& OutResult);
+};
+
+struct IMOPSPELLSYSTEMRUNTIME_API FDeliveryRigPoseSelectorV3
+{
+	static const FDeliveryRigPoseV3& SelectPose(const FDeliveryRigEvalResultV3& RigOut, int32 EmitterIndex);
 };

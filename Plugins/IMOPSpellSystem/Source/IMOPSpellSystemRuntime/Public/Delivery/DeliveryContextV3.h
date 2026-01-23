@@ -22,6 +22,11 @@ struct FDeliveryContextV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	float StartTime = 0.f;
 
+	// For rig-driven multi-emitter deliveries: which emitter pose this instance should use.
+	// INDEX_NONE => use RigOut.Root.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
+	int32 EmitterIndex = INDEX_NONE;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	int32 Seed = 0;
 };

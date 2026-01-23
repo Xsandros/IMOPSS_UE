@@ -2,7 +2,7 @@
 #include "Delivery/DeliveryEventContextV3.h"
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
 #include "Delivery/Drivers/DeliveryDriver_InstantQueryV3.h"
-
+#include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
 #include "Actions/SpellActionExecutorV3.h"
 #include "Core/SpellGameplayTagsV3.h"
 #include "Delivery/Drivers/DeliveryDriver_FieldV3.h"
@@ -113,9 +113,11 @@ void UDeliverySubsystemV3::Tick(float DeltaSeconds)
 
 	for (const FDeliveryHandleV3& H : ToRemove)
 	{
-		Active.Remove(H);
-		ActiveCtx.Remove(H);
+		Active.Remove(H); 
+		ActiveCtx.Remove(H); 
+		ActiveDelivery.Remove(H);
 	}
+
 }
 
 
@@ -164,76 +166,86 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	}
 
 	const FGuid RuntimeGuid = Ctx.Runtime->GetRuntimeGuid();
-	const int32 InstanceIndex = AllocateInstanceIndex(RuntimeGuid, Spec.DeliveryId);
 
-	FDeliveryHandleV3 Handle;
-	Handle.RuntimeGuid = RuntimeGuid;
-	Handle.DeliveryId = Spec.DeliveryId;
-	Handle.InstanceIndex = InstanceIndex;
-
-	const int32 Seed = HashCombine(Ctx.Seed, HashCombine(GetTypeHash(Spec.DeliveryId), InstanceIndex));
-
-	FDeliveryContextV3 Dctx;
-	Dctx.Handle = Handle;
-	Dctx.Spec = Spec;
-	Dctx.Caster = Ctx.Caster;
-	Dctx.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
-	Dctx.Seed = Seed;
-
-	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StartDelivery: Kind=%d Id=%s Inst=%d Runtime=%s Seed=%d"),
-		(int32)Spec.Kind, *Spec.DeliveryId.ToString(), InstanceIndex, *RuntimeGuid.ToString(), Seed);
-
-	UDeliveryDriverBaseV3* Driver = CreateDriverForKind(Spec.Kind).Get();
-	if (!Driver)
+	// Evaluate rig once to see if we have multi-emitters (OrbitSampler etc.)
+	int32 EmitterCount = 0;
+	if (!Spec.Rig.IsEmpty())
 	{
-		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery failed: driver create failed (Kind=%d)"), (int32)Spec.Kind);
-		return false;
+		FDeliveryContextV3 Temp;
+		Temp.Handle.RuntimeGuid = RuntimeGuid;
+		Temp.Handle.DeliveryId = Spec.DeliveryId;
+		Temp.Handle.InstanceIndex = 0;
+		Temp.Spec = Spec;
+		Temp.Caster = Ctx.Caster;
+		Temp.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
+		Temp.Seed = HashCombine(Ctx.Seed, GetTypeHash(Spec.DeliveryId));
+		Temp.EmitterIndex = INDEX_NONE;
+
+		FDeliveryRigEvalResultV3 RigOut;
+		FDeliveryRigEvaluatorV3::Evaluate(Ctx, Temp, Spec.Rig, RigOut);
+		EmitterCount = RigOut.Emitters.Num();
 	}
 
-	Active.Add(Handle, Driver);
-	ActiveCtx.Add(Handle, Ctx);
+	// Spawn either 1 instance (no emitters) or N instances (one per emitter)
+	const int32 SpawnCount = (EmitterCount > 0) ? EmitterCount : 1;
+	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StartDelivery: Kind=%d Id=%s Runtime=%s Emitters=%d -> Spawn=%d"),
+		(int32)Spec.Kind, *Spec.DeliveryId.ToString(), *RuntimeGuid.ToString(), EmitterCount, SpawnCount);
 
-	OutHandle = Handle;
-	
-	ActiveDelivery.Add(Handle, Dctx);
+	FDeliveryHandleV3 FirstHandle;
 
-	// Register StopOnEventTag routing (subscribe once per tag)
-	if (Spec.StopPolicy.StopOnEventTag.IsValid())
+	for (int32 i = 0; i < SpawnCount; i++)
 	{
-		StopByTag.FindOrAdd(Spec.StopPolicy.StopOnEventTag).Add(Handle);
+		const int32 InstanceIndex = AllocateInstanceIndex(RuntimeGuid, Spec.DeliveryId);
 
-		// subscribe once per tag
-		if (!StopTagSubs.Contains(Spec.StopPolicy.StopOnEventTag))
+		FDeliveryHandleV3 Handle;
+		Handle.RuntimeGuid = RuntimeGuid;
+		Handle.DeliveryId = Spec.DeliveryId;
+		Handle.InstanceIndex = InstanceIndex;
+
+		const int32 Seed = HashCombine(Ctx.Seed, HashCombine(GetTypeHash(Spec.DeliveryId), HashCombine(InstanceIndex, i)));
+
+		FDeliveryContextV3 Dctx;
+		Dctx.Handle = Handle;
+		Dctx.Spec = Spec;
+		Dctx.Caster = Ctx.Caster;
+		Dctx.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
+		Dctx.Seed = Seed;
+
+		// If rig had emitters, bind this instance to a specific emitter index
+		Dctx.EmitterIndex = (EmitterCount > 0) ? i : INDEX_NONE;
+
+		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(Spec.Kind).Get();
+		if (!Driver)
 		{
-			if (UWorld* W = GetWorld())
+			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery failed: driver create failed (Kind=%d)"), (int32)Spec.Kind);
+			// Stop already started instances for robustness
+			if (FirstHandle.IsValid())
 			{
-				if (UGameInstance* GI = W->GetGameInstance())
-				{
-					if (USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>())
-					{
-						FSpellTriggerMatcherV3 M;
-						M.bUseExactTag = true;
-						M.ExactTag = Spec.StopPolicy.StopOnEventTag;
-
-						FSpellEventSubscriptionHandleV3 HSub = Bus->Subscribe(this, M);
-						StopTagSubs.Add(Spec.StopPolicy.StopOnEventTag, HSub);
-
-						UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystem: subscribed StopOnEventTag=%s (handle=%d)"),
-							*Spec.StopPolicy.StopOnEventTag.ToString(), HSub.Id);
-					}
-				}
+				StopById(Ctx, Spec.DeliveryId, EDeliveryStopReasonV3::Failed);
 			}
+			return false;
 		}
 
-		UE_LOG(LogIMOPDeliveryV3, Log, TEXT("DeliverySubsystem: StopOnEventTag mapped tag=%s -> Id=%s Inst=%d"),
-			*Spec.StopPolicy.StopOnEventTag.ToString(), *Handle.DeliveryId.ToString(), Handle.InstanceIndex);
+		Active.Add(Handle, Driver);
+		ActiveCtx.Add(Handle, Ctx);
+		// Optional: if you maintain ActiveDelivery map, keep it in sync (safe even if map exists)
+		ActiveDelivery.Add(Handle, Dctx);
+
+		UE_LOG(LogIMOPDeliveryV3, Verbose, TEXT("StartDelivery Instance: Id=%s Inst=%d Seed=%d EmitterIndex=%d"),
+			*Handle.DeliveryId.ToString(), Handle.InstanceIndex, Seed, Dctx.EmitterIndex);
+
+		Driver->Start(Ctx, Dctx);
+
+		if (!FirstHandle.IsValid())
+		{
+			FirstHandle = Handle;
+		}
 	}
 
-	
-	Driver->Start(Ctx, Dctx);
+	OutHandle = FirstHandle;
 	return true;
-
 }
+
 
 bool UDeliverySubsystemV3::StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason)
 {

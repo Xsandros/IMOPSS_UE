@@ -133,6 +133,128 @@ static bool ResolveAttachPose(
 	return false;
 }
 
+static void AddEmitter(
+	const FDeliveryRigPoseV3& Pose,
+	int32 SpawnSlot,
+	TArray<FDeliveryRigEmitterV3>& OutEmitters)
+{
+	FDeliveryRigEmitterV3 E;
+	E.Pose = Pose;
+	E.SpawnSlot = SpawnSlot;
+	OutEmitters.Add(E);
+}
+
+static void BuildFanEmitters(
+	const FDeliveryRigPoseV3& Root,
+	int32 Count,
+	float ArcDeg,
+	const FVector& Axis,
+	float Distance,
+	int32 BaseSpawnSlot,
+	bool bSlotByIndex,
+	int32 SlotModulo,
+	TArray<FDeliveryRigEmitterV3>& OutEmitters)
+{
+	OutEmitters.Reset();
+
+	if (Count <= 0 || Distance <= 0.f)
+	{
+		return;
+	}
+
+	const FVector NAxis = Axis.GetSafeNormal();
+	const FVector Forward = Root.Rotation.Vector();
+
+	// Centered fan: angles from -Arc/2 to +Arc/2
+	const float HalfArc = 0.5f * ArcDeg;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		const float Alpha = (Count == 1) ? 0.5f : (float)i / (float)(Count - 1);
+		const float AngleDeg = FMath::Lerp(-HalfArc, HalfArc, Alpha);
+
+		const FQuat RotQ(NAxis, FMath::DegreesToRadians(AngleDeg));
+		const FVector Dir = RotQ.RotateVector(Forward).GetSafeNormal();
+
+		FDeliveryRigPoseV3 P;
+		P.Location = Root.Location + (Dir * Distance);
+		P.Rotation = Root.Rotation; // keep root rotation; dir is implicit in location
+
+		int32 Slot = BaseSpawnSlot;
+		if (bSlotByIndex && SlotModulo > 0)
+		{
+			Slot = BaseSpawnSlot + (i % SlotModulo);
+		}
+
+		AddEmitter(P, Slot, OutEmitters);
+	}
+}
+
+static void BuildScatterEmitters(
+	FRandomStream& Rng,
+	const FDeliveryRigPoseV3& Root,
+	int32 Count,
+	float Radius,
+	const FVector& Extents,
+	float YawDegrees,
+	int32 BaseSpawnSlot,
+	bool bSlotByIndex,
+	int32 SlotModulo,
+	TArray<FDeliveryRigEmitterV3>& OutEmitters)
+{
+	OutEmitters.Reset();
+
+	if (Count <= 0)
+	{
+		return;
+	}
+
+	const bool bUseSphere = (Radius > 0.f);
+	const bool bUseBox = !bUseSphere && !Extents.IsNearlyZero();
+
+	if (!bUseSphere && !bUseBox)
+	{
+		return;
+	}
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		FVector Local = FVector::ZeroVector;
+
+		if (bUseSphere)
+		{
+			// Deterministic random point in sphere
+			Local = Rng.VRand() * (Rng.FRand() * Radius);
+		}
+		else
+		{
+			Local.X = Rng.FRandRange(-Extents.X, Extents.X);
+			Local.Y = Rng.FRandRange(-Extents.Y, Extents.Y);
+			Local.Z = Rng.FRandRange(-Extents.Z, Extents.Z);
+		}
+
+		FDeliveryRigPoseV3 P;
+		P.Location = Root.Location + Root.Rotation.RotateVector(Local);
+		P.Rotation = Root.Rotation;
+
+		if (YawDegrees > 0.f)
+		{
+			const float Y = Rng.FRandRange(-YawDegrees, YawDegrees);
+			P.Rotation = (P.Rotation + FRotator(0.f, Y, 0.f)).GetNormalized();
+		}
+
+		int32 Slot = BaseSpawnSlot;
+		if (bSlotByIndex && SlotModulo > 0)
+		{
+			Slot = BaseSpawnSlot + (i % SlotModulo);
+		}
+
+		AddEmitter(P, Slot, OutEmitters);
+	}
+}
+
+
+
 static void BuildOrbitEmitters(
 	const FDeliveryRigPoseV3& Root,
 	int32 Count,
@@ -278,8 +400,17 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 		}
 		case EDeliveryRigNodeKindV3::Offset:
 		{
-			ApplyLocalOffsetRotation(P, N.LocalOffset, N.LocalRotation);
-			break;
+				ApplyLocalOffsetRotation(P, N.LocalOffset, N.LocalRotation);
+
+				if (N.bAffectEmitters && OutResult.Emitters.Num() > 0)
+				{
+					for (FDeliveryRigEmitterV3& E : OutResult.Emitters)
+					{
+						ApplyLocalOffsetRotation(E.Pose, N.LocalOffset, N.LocalRotation);
+					}
+				}
+				break;
+
 		}
 		case EDeliveryRigNodeKindV3::AimForward:
 		{
@@ -305,13 +436,25 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 			break;
 		}
 		case EDeliveryRigNodeKindV3::RotateOverTime: {
-				// General-purpose time-awareness: apply rotation rate * elapsed
 				if (!N.RotationRateDegPerSec.IsZero())
 				{
 					const FRotator Delta = N.RotationRateDegPerSec * ElapsedSeconds;
 					P.Rotation = (P.Rotation + Delta).GetNormalized();
 				}
 				ApplyLocalOffsetRotation(P, N.LocalOffset, N.LocalRotation);
+
+				if (N.bAffectEmitters && OutResult.Emitters.Num() > 0)
+				{
+					for (FDeliveryRigEmitterV3& E : OutResult.Emitters)
+					{
+						if (!N.RotationRateDegPerSec.IsZero())
+						{
+							const FRotator Delta = N.RotationRateDegPerSec * ElapsedSeconds;
+							E.Pose.Rotation = (E.Pose.Rotation + Delta).GetNormalized();
+						}
+						ApplyLocalOffsetRotation(E.Pose, N.LocalOffset, N.LocalRotation);
+					}
+				}
 				break;
 		}
 		case EDeliveryRigNodeKindV3::OrbitSampler: 
@@ -326,6 +469,35 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 			ApplyLocalOffsetRotation(P, N.LocalOffset, N.LocalRotation);
 			break;
 		}
+		case EDeliveryRigNodeKindV3::FanSampler:
+			{
+				if (N.FanCount <= 0)
+				{
+					break;
+				}
+
+				TArray<FDeliveryRigEmitterV3> NewEmitters;
+				BuildFanEmitters(
+					OutResult.Root,
+					N.FanCount,
+					N.FanArcDegrees,
+					N.FanAxis,
+					N.FanDistance,
+					N.SpawnSlot,
+					N.bFanSlotByIndex,
+					N.FanSlotModulo,
+					NewEmitters);
+
+				if (N.bAppendEmitters && OutResult.Emitters.Num() > 0)
+				{
+					OutResult.Emitters.Append(NewEmitters);
+				}
+				else
+				{
+					OutResult.Emitters = MoveTemp(NewEmitters);
+				}
+				break;
+			}
 		default:
 			break;
 		}
@@ -343,6 +515,7 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 		const FDeliveryRigNodeV3& N = Rig.Nodes[i];
 		if (N.Kind == EDeliveryRigNodeKindV3::OrbitSampler && N.OrbitCount > 0 && N.OrbitRadius > 0.f)
 		{
+			TArray<FDeliveryRigEmitterV3> NewEmitters;
 			BuildOrbitEmitters(
 				OutResult.Root,
 				N.OrbitCount,
@@ -354,7 +527,17 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 				N.SpawnSlot,
 				N.bOrbitSlotByIndex,
 				N.OrbitSlotModulo,
-				OutResult.Emitters);
+				NewEmitters);
+
+			if (N.bAppendEmitters && OutResult.Emitters.Num() > 0)
+			{
+				OutResult.Emitters.Append(NewEmitters);
+			}
+			else
+			{
+				OutResult.Emitters = MoveTemp(NewEmitters);
+			}
+
 			break;
 		}
 	}

@@ -27,6 +27,15 @@ struct FDeliveryContextV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
 	int32 EmitterIndex = INDEX_NONE;
 	
+	// Cached pose derived from Rig/Attach according to PoseUpdatePolicy
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FTransform CachedPose = FTransform::Identity;
+
+	// Pose update accumulator (for Interval policy)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	float PoseAccum = 0.f;
+
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	int32 Seed = 0;
 };

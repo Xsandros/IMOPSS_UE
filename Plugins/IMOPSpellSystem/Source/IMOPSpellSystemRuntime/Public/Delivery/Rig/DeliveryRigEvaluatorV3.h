@@ -34,9 +34,19 @@ struct FDeliveryRigEvalResultV3
 
 struct IMOPSPELLSYSTEMRUNTIME_API FDeliveryRigEvaluatorV3
 {
+	// Default: uses world time from Ctx (if available)
 	static bool Evaluate(
 		const FSpellExecContextV3& Ctx,
 		const FDeliveryContextV3& DeliveryCtx,
 		const FDeliveryRigV3& Rig,
+		FDeliveryRigEvalResultV3& OutResult);
+
+	// Time-aware evaluation (NowSeconds usually = World->GetTimeSeconds()).
+	// Nodes can use Elapsed = NowSeconds - DeliveryCtx.StartTime.
+	static bool Evaluate(
+		const FSpellExecContextV3& Ctx,
+		const FDeliveryContextV3& DeliveryCtx,
+		const FDeliveryRigV3& Rig,
+		float NowSeconds,
 		FDeliveryRigEvalResultV3& OutResult);
 };

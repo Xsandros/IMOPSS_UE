@@ -81,6 +81,20 @@ enum class EDeliveryQueryModeV3 : uint8
 	LineTrace
 };
 
+UENUM(BlueprintType)
+enum class EDeliveryPoseUpdatePolicyV3 : uint8
+{
+	// Evaluate pose once on Start, then keep it fixed.
+	OnStart,
+
+	// Evaluate pose every frame tick (time-aware rigs).
+	EveryTick,
+
+	// Evaluate pose on a fixed interval (e.g. Field/Beam evaluation ticks).
+	Interval
+};
+
+
 USTRUCT(BlueprintType)
 struct FDeliveryQueryPolicyV3
 {

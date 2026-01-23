@@ -176,6 +176,14 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
 	FDeliveryRigV3 Rig;
 
+	// How often the rig pose should be evaluated (time-aware rigs).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	EDeliveryPoseUpdatePolicyV3 PoseUpdatePolicy = EDeliveryPoseUpdatePolicyV3::OnStart;
+
+	// Used when PoseUpdatePolicy == Interval (0 => drivers may choose their own tick interval).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	float PoseUpdateInterval = 0.f;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryShapeV3 Shape;
@@ -208,6 +216,9 @@ struct FDeliverySpecV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryMoverConfigV3 Mover;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover")
+	bool bKinematicFromRig = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryBeamConfigV3 Beam;

@@ -138,6 +138,8 @@ static void BuildOrbitEmitters(
 	int32 Count,
 	float Radius,
 	float PhaseDeg,
+	float AngularSpeedDegPerSec,
+	float ElapsedSeconds,
 	const FVector& Axis,
 	TArray<FDeliveryRigPoseV3>& OutEmitters)
 {
@@ -154,7 +156,8 @@ static void BuildOrbitEmitters(
 	X.Normalize();
 	const FVector Y = FVector::CrossProduct(N, X).GetSafeNormal();
 
-	const float PhaseRad = FMath::DegreesToRadians(PhaseDeg);
+	const float PhaseRad = FMath::DegreesToRadians(PhaseDeg + (ElapsedSeconds * AngularSpeedDegPerSec));
+
 
 	OutEmitters.Reset();
 	OutEmitters.Reserve(Count);
@@ -197,7 +200,22 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 	const FDeliveryRigV3& Rig,
 	FDeliveryRigEvalResultV3& OutResult)
 {
+	const float Now = (Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f);
+	return Evaluate(Ctx, DeliveryCtx, Rig, Now, OutResult);
+}
+
+bool FDeliveryRigEvaluatorV3::Evaluate(
+	const FSpellExecContextV3& Ctx,
+	const FDeliveryContextV3& DeliveryCtx,
+	const FDeliveryRigV3& Rig,
+	float NowSeconds,
+	FDeliveryRigEvalResultV3& OutResult)
+{
+
 	OutResult = {};
+
+	const float ElapsedSeconds = (DeliveryCtx.StartTime > 0.f) ? (NowSeconds - DeliveryCtx.StartTime) : 0.f;
+
 
 	if (Rig.Nodes.Num() == 0)
 	{
@@ -274,8 +292,18 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 			ApplyLocalOffsetRotation(P, N.LocalOffset, N.LocalRotation);
 			break;
 		}
-		case EDeliveryRigNodeKindV3::OrbitSampler:
-		{
+		case EDeliveryRigNodeKindV3::RotateOverTime: {
+				// General-purpose time-awareness: apply rotation rate * elapsed
+				if (!N.RotationRateDegPerSec.IsZero())
+				{
+					const FRotator Delta = N.RotationRateDegPerSec * ElapsedSeconds;
+					P.Rotation = (P.Rotation + Delta).GetNormalized();
+				}
+				ApplyLocalOffsetRotation(P, N.LocalOffset, N.LocalRotation);
+				break;
+		}
+		case EDeliveryRigNodeKindV3::OrbitSampler: 
+			{
 			// Root stays as-is; emitters will be generated after root is determined.
 			ApplyLocalOffsetRotation(P, N.LocalOffset, N.LocalRotation);
 			break;
@@ -303,7 +331,7 @@ bool FDeliveryRigEvaluatorV3::Evaluate(
 		const FDeliveryRigNodeV3& N = Rig.Nodes[i];
 		if (N.Kind == EDeliveryRigNodeKindV3::OrbitSampler && N.OrbitCount > 0 && N.OrbitRadius > 0.f)
 		{
-			BuildOrbitEmitters(OutResult.Root, N.OrbitCount, N.OrbitRadius, N.OrbitPhaseDegrees, N.OrbitAxis, OutResult.Emitters);
+			BuildOrbitEmitters(OutResult.Root, N.OrbitCount, N.OrbitRadius, N.OrbitPhaseDegrees, N.OrbitAngularSpeedDegPerSec, ElapsedSeconds, N.OrbitAxis, OutResult.Emitters);
 			break;
 		}
 	}

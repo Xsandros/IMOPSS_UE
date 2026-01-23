@@ -17,11 +17,15 @@ enum class EDeliveryRigNodeKindV3 : uint8
 	AimForward,      // aims forward based on parent + local rotation
 	LookAtTargetSet, // aims at center of a target set
 
+	// Reorients rotation over time (general purpose: scanning, spinning, sweeping)
+	RotateOverTime, // rotation rate * elapsed
+
 	// Produces multiple emitter poses around current pose (does not change root)
 	OrbitSampler,
 
 	// Adds deterministic noise to root and/or emitters
 	Jitter,
+
 };
 
 USTRUCT(BlueprintType)
@@ -57,8 +61,14 @@ struct FDeliveryRigNodeV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	float OrbitRadius = 0.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	float OrbitPhaseDegrees = 0.f; // rotates the ring
+	// base phase (degrees)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig") 
+	float OrbitPhaseDegrees = 0.f; 
+
+	// Time-awareness: additional phase = ElapsedSeconds * OrbitAngularSpeedDegPerSec
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig") 
+	float OrbitAngularSpeedDegPerSec = 0.f;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	FVector OrbitAxis = FVector::UpVector; // ring plane normal
@@ -73,6 +83,11 @@ struct FDeliveryRigNodeV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	bool bApplyJitterToRoot = true;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig") 
 	bool bApplyJitterToEmitters = true;
+
+	// RotateOverTime params (degrees per second)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	FRotator RotationRateDegPerSec = FRotator::ZeroRotator;
+
 };

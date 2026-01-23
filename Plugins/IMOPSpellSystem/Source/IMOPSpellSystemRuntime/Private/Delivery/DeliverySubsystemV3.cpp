@@ -13,6 +13,67 @@
 
 #include "Engine/World.h"
 
+static void UpdateDeliveryPoseIfNeeded(const FSpellExecContextV3& Ctx, FDeliveryContextV3& Dctx, float DeltaSeconds)
+{
+	const bool bHasRig = !Dctx.Spec.Rig.IsEmpty();
+
+	auto EvalPose = [&]()
+	{
+		if (bHasRig)
+		{
+			FDeliveryRigEvalResultV3 RigOut;
+			FDeliveryRigEvaluatorV3::Evaluate(Ctx, Dctx, Dctx.Spec.Rig, RigOut);
+			Dctx.CachedPose = FTransform(RigOut.Root.Rotation, RigOut.Root.Location);
+		}
+		else
+		{
+			// Use Attach
+			// If you already have a shared ResolveAttachTransform helper, use that.
+			// Fallback: world/caster handled by drivers already; but here we prefer unified cache.
+			const FTransform Xf = FTransform::Identity;
+			Dctx.CachedPose = Xf;
+		}
+	};
+
+	switch (Dctx.Spec.PoseUpdatePolicy)
+	{
+	case EDeliveryPoseUpdatePolicyV3::OnStart:
+		// only update if not set yet
+		if (Dctx.CachedPose.Equals(FTransform::Identity))
+		{
+			EvalPose();
+		}
+		break;
+
+	case EDeliveryPoseUpdatePolicyV3::EveryTick:
+		EvalPose();
+		break;
+
+	case EDeliveryPoseUpdatePolicyV3::Interval:
+		{
+			const float Interval = (Dctx.Spec.PoseUpdateInterval > 0.f) ? Dctx.Spec.PoseUpdateInterval : 0.f;
+			if (Interval <= 0.f)
+			{
+				// treat as EveryTick if interval unspecified
+				EvalPose();
+			}
+			else
+			{
+				Dctx.PoseAccum += DeltaSeconds;
+				if (Dctx.PoseAccum >= Interval || Dctx.CachedPose.Equals(FTransform::Identity))
+				{
+					Dctx.PoseAccum = 0.f;
+					EvalPose();
+				}
+			}
+			break;
+		}
+	default:
+		break;
+	}
+}
+
+
 DEFINE_LOG_CATEGORY(LogIMOPDeliveryV3);
 
 void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)

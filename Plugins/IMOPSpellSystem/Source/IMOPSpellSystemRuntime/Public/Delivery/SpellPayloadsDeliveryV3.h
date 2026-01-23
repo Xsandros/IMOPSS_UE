@@ -22,6 +22,11 @@ struct FPayload_DeliveryStopV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FName DeliveryId = NAME_None;
 
+	// Stop exactly one spawned primitive instance.
+	// If DeliveryId is None, it will search across all active deliveries in this runtime.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FName PrimitiveId = NAME_None;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryHandleV3 Handle;
 
@@ -29,5 +34,9 @@ struct FPayload_DeliveryStopV3
 	bool bUseHandle = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	bool bUsePrimitiveId = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	EDeliveryStopReasonV3 Reason = EDeliveryStopReasonV3::Manual;
+
 };

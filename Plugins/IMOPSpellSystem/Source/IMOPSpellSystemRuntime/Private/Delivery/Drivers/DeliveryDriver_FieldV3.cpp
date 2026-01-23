@@ -150,12 +150,15 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
 	if (!DeliveryCtx.Spec.Rig.IsEmpty())
 	{
 		FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
-		Center = RigOut.Root.Location;
+
+		// Per-emitter center if spawned via multi-emitter
+		const FDeliveryRigPoseV3& P = FDeliveryRigPoseSelectorV3::SelectPose(RigOut, DeliveryCtx.EmitterIndex);
+		Center = P.Location;
 	}
 	else
 	{
-		Xf = ResolveAttachTransform(Ctx);
-		Center = Xf.GetLocation();
+		const FTransform Xf2 = ResolveAttachTransform(Ctx);
+		Center = Xf2.GetLocation();
 	}
 
 	float Radius = DeliveryCtx.Spec.Shape.Radius;

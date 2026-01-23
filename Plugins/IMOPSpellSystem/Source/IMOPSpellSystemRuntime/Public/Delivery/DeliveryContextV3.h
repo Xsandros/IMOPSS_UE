@@ -13,6 +13,16 @@ struct FDeliveryContextV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryHandleV3 Handle;
 
+	// Identifies which sub-primitive / rig emitter this delivery instance represents.
+	// Stable per spawned instance, used for logs and propagated into delivery events.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FName PrimitiveId = "P0";
+
+	// When spawned from a rig multi-emitter evaluation, this indicates which emitter index this instance uses.
+	// -1 means "root" / not emitter-driven.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	int32 EmitterIndex = -1;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliverySpecV3 Spec;
 
@@ -21,11 +31,6 @@ struct FDeliveryContextV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	float StartTime = 0.f;
-
-	// For rig-driven multi-emitter deliveries: which emitter pose this instance should use.
-	// INDEX_NONE => use RigOut.Root.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery") 
-	int32 EmitterIndex = INDEX_NONE;
 	
 	// Cached pose derived from Rig/Attach according to PoseUpdatePolicy
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")

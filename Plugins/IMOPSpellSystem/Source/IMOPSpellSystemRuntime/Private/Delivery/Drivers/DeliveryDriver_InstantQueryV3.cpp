@@ -142,6 +142,22 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, const
 	{
 		DrawDebugLine(World, From, To, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.5f);
 	}
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawPath)
+	{
+		// Direction indicator (helps verify per-emitter forward)
+		DrawDebugDirectionalArrow(
+			World,
+			From,
+			From + (Dir.GetSafeNormal() * 120.f),
+			25.f,
+			FColor::Cyan,
+			false,
+			DeliveryCtx.Spec.DebugDraw.Duration,
+			0,
+			1.5f
+		);
+	}
+
 	
 	UE_LOG(LogIMOPDeliveryDriverV3, Log, TEXT("InstantQuery: From=%s To=%s Range=%.1f Profile=%s IgnoreCaster=%d MaxHits=%d Multi=%d"),
 		*From.ToString(), *To.ToString(), Range, *DeliveryCtx.Spec.Query.CollisionProfile.ToString(),

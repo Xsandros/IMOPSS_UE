@@ -54,7 +54,7 @@ void UExec_StopDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* P
 
 	bool bStopped = false;
 
-	if (bHasValidHandle)
+	if (P->bUseHandle && P->Handle.IsValid())
 	{
 		UE_LOG(LogIMOPExecStopDeliveryV3, Log,
 			TEXT("Exec_StopDelivery: StopDelivery by Handle Id=%s Inst=%d Reason=%s"),
@@ -64,7 +64,12 @@ void UExec_StopDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* P
 
 		bStopped = Subsys->StopDelivery(Ctx, P->Handle, P->Reason);
 	}
-	else // by id
+	else if (P->bUsePrimitiveId && P->PrimitiveId != NAME_None)
+	{
+		// DeliveryId can be None => search all deliveries in this runtime
+		bStopped = Subsys->StopByPrimitiveId(Ctx, P->DeliveryId, P->PrimitiveId, P->Reason);
+	}
+	else if (P->DeliveryId != NAME_None)
 	{
 		UE_LOG(LogIMOPExecStopDeliveryV3, Log,
 			TEXT("Exec_StopDelivery: StopById Id=%s Reason=%s"),

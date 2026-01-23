@@ -302,6 +302,25 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, float DeltaSe
 		DrawDebugLine(Ctx.GetWorld(), PrevPos, NewPos, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 2.0f);
 	}
 
+	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawPath)
+	{
+		const FVector Step = (NewPos - PrevPos);
+		const FVector Dir = Step.IsNearlyZero() ? (Velocity.IsNearlyZero() ? FVector::ForwardVector : Velocity.GetSafeNormal()) : Step.GetSafeNormal();
+
+		DrawDebugDirectionalArrow(
+			Ctx.GetWorld(),
+			NewPos,
+			NewPos + (Dir * 120.f),
+			25.f,
+			FColor::Cyan,
+			false,
+			DeliveryCtx.Spec.DebugDraw.Duration,
+			0,
+			2.0f
+		);
+	}
+
+	
 	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawShape)
 	{
 		switch (DeliveryCtx.Spec.Shape.Kind)

@@ -13,6 +13,19 @@
 
 #include "Engine/World.h"
 
+static FName BuildPrimitiveId(FName DeliveryId, int32 InstanceIndex, int32 EmitterIndex, int32 SpawnSlot)
+{
+	// Prefer readable, deterministic IDs.
+	// If it comes from a rig emitter: <DeliveryId>_E<idx>_S<slot>
+	// Else: <DeliveryId>_I<instance>
+	if (EmitterIndex >= 0)
+	{
+		return FName(*FString::Printf(TEXT("%s_E%d_S%d"), *DeliveryId.ToString(), EmitterIndex, SpawnSlot));
+	}
+	return FName(*FString::Printf(TEXT("%s_I%d"), *DeliveryId.ToString(), InstanceIndex));
+}
+
+
 static void UpdateDeliveryPoseIfNeeded(const FSpellExecContextV3& Ctx, FDeliveryContextV3& Dctx, float DeltaSeconds)
 {
 	const bool bHasRig = !Dctx.Spec.Rig.IsEmpty();
@@ -334,7 +347,8 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Dctx.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
 		Dctx.Seed = Seed;
 		Dctx.EmitterIndex = (EmitterCount > 0) ? EmitterIndex : INDEX_NONE;
-
+		Dctx.PrimitiveId  = BuildPrimitiveId(Dctx.Handle.DeliveryId, Dctx.Handle.InstanceIndex, Dctx.EmitterIndex, SpawnSlot);
+		
 		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(SpecInst.Kind).Get();
 		if (!Driver)
 		{
@@ -350,8 +364,8 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		ActiveCtx.Add(Handle, Ctx);
 		ActiveDelivery.Add(Handle, Dctx);
 
-		UE_LOG(LogIMOPDeliveryV3, Verbose, TEXT("StartDelivery Instance: Id=%s Inst=%d Seed=%d EmitterIndex=%d Slot=%d Kind=%d OutSet=%s"),
-	*Handle.DeliveryId.ToString(), Handle.InstanceIndex, Seed, Dctx.EmitterIndex, SpawnSlot, (int32)SpecInst.Kind, *SpecInst.OutTargetSet.ToString());
+		UE_LOG(LogIMOPDeliveryV3, Verbose, TEXT("StartDelivery Instance: Id=%s Inst=%d Seed=%d EmitterIndex=%d Primitive=%s  Slot=%d Kind=%d OutSet=%s"),
+	*Handle.DeliveryId.ToString(), Handle.InstanceIndex, Seed, Dctx.EmitterIndex, *Dctx.PrimitiveId.ToString(), SpawnSlot, (int32)SpecInst.Kind, *SpecInst.OutTargetSet.ToString());
 
 
 		// Register StopOnEventTag routing (subscribe once per tag)
@@ -449,6 +463,64 @@ bool UDeliverySubsystemV3::StopById(const FSpellExecContextV3& Ctx, FName Delive
 	return Matches.Num() > 0;
 }
 
+bool UDeliverySubsystemV3::StopByPrimitiveId(const FSpellExecContextV3& Ctx, FName DeliveryId, FName PrimitiveId, EDeliveryStopReasonV3 Reason)
+{
+	if (PrimitiveId == NAME_None)
+	{
+		UE_LOG(LogIMOPDeliveryV3, Warning, TEXT("StopByPrimitiveId: PrimitiveId=None"));
+		return false;
+	}
+
+	const USpellRuntimeV3* RT = Cast<USpellRuntimeV3>(Ctx.Runtime);
+	const FGuid RuntimeGuid = RT ? RT->GetRuntimeGuid() : FGuid();
+
+	if (!RuntimeGuid.IsValid())
+	{
+		UE_LOG(LogIMOPDeliveryV3, Warning, TEXT("StopByPrimitiveId: RuntimeGuid invalid"));
+		return false;
+	}
+
+	// Find matching handle in this runtime (and optionally delivery id)
+	FDeliveryHandleV3 FoundHandle;
+	bool bFound = false;
+
+	for (const TPair<FDeliveryHandleV3, FDeliveryContextV3>& It : ActiveDelivery)
+	{
+		const FDeliveryHandleV3& H = It.Key;
+		const FDeliveryContextV3& D = It.Value;
+
+		// Runtime scoping: only stop things from the same spell runtime
+		if (H.RuntimeGuid != RuntimeGuid)
+		{
+			continue;
+		}
+
+		if (DeliveryId != NAME_None && H.DeliveryId != DeliveryId)
+		{
+			continue;
+		}
+
+		if (D.PrimitiveId == PrimitiveId)
+		{
+			FoundHandle = H;
+			bFound = true;
+			break;
+		}
+	}
+
+	if (!bFound)
+	{
+		UE_LOG(LogIMOPDeliveryV3, Warning, TEXT("StopByPrimitiveId: not found (DeliveryId=%s PrimitiveId=%s Runtime=%s)"),
+			*DeliveryId.ToString(),
+			*PrimitiveId.ToString(),
+			*RuntimeGuid.ToString());
+		return false;
+	}
+
+	return StopDelivery(Ctx, FoundHandle, Reason);
+}
+
+
 void UDeliverySubsystemV3::GetActiveHandles(TArray<FDeliveryHandleV3>& Out) const
 {
 	Out.Reset();
@@ -470,9 +542,25 @@ void UDeliverySubsystemV3::EmitDeliveryEvent(const FSpellExecContextV3& Ctx, con
 	Ev.TimeSeconds = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
 	Ev.RuntimeGuid = Ctx.Runtime ? Ctx.Runtime->GetRuntimeGuid() : FGuid();
 
-	Ev.Data.InitializeAs<FDeliveryEventContextV3>(Payload);
+	FDeliveryEventContextV3 PayloadFixed = Payload;
+	Ev.Data.InitializeAs<FDeliveryEventContextV3>(PayloadFixed);
+	
+	
+	if (PayloadFixed.PrimitiveId.IsNone())
+	{
+		// If caller didn’t set it, derive from active delivery ctx.
+		if (const FDeliveryContextV3* Found = ActiveDelivery.Find(PayloadFixed.Handle))
+		{
+			PayloadFixed.PrimitiveId = Found->PrimitiveId;
+		}
+		else
+		{
+			PayloadFixed.PrimitiveId = "P0";
+		}
+	}
 
-
+	
+	
 	UE_LOG(LogIMOPDeliveryV3, Verbose, TEXT("EmitDeliveryEvent: %s Hits=%d Id=%s Inst=%d"),
 		*EventTag.ToString(),
 		Payload.Hits.Num(),

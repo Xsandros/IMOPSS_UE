@@ -142,11 +142,24 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, const FDeliv
 		return;
 	}
 
-	const FTransform StartXf = ResolveAttachTransform(Ctx);
-	Position = StartXf.GetLocation();
+	FTransform StartXf = FTransform::Identity;
 
+	// Prefer Rig pose if present (time-aware pose pipeline)
+	if (!DeliveryCtx.Spec.Rig.IsEmpty())
+	{
+		FDeliveryRigEvalResultV3 RigOut;
+		FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
+		StartXf = FTransform(RigOut.Root.Rotation, RigOut.Root.Location);
+	}
+	else
+	{
+		StartXf = ResolveAttachTransform(Ctx);
+	}
+
+	Position = StartXf.GetLocation();
 	const FVector Forward = StartXf.GetRotation().GetForwardVector();
 	Velocity = Forward * FMath::Max(0.f, DeliveryCtx.Spec.Mover.Speed);
+
 
 	UE_LOG(LogIMOPDeliveryMoverV3, Log,
 		TEXT("Mover Start: Id=%s Inst=%d Motion=%d Speed=%.1f MaxDist=%.1f MaxDur=%.1f Grav=%.2f HomingStr=%.2f HomingSet=%s StopOnHit=%d Pierce=%d MaxPierce=%d TickInterval=%.3f Shape=%d Profile=%s IgnoreCaster=%d"),
@@ -216,8 +229,57 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, float DeltaSe
 	const float DtSim = (Interval > 0.f) ? Interval : DtFrame;
 
 	const FVector PrevPos = Position;
-	IntegrateMotion(Ctx, DtSim);
+
+	// General, time-aware pose follow via Rig/Attach:
+	// - OnStart  => use IntegrateMotion (classic projectile)
+	// - EveryTick/Interval => update Position from Rig/Attach (kinematic), then sweep Prev->New
+	const bool bHasRig = !DeliveryCtx.Spec.Rig.IsEmpty();
+	const EDeliveryPoseUpdatePolicyV3 Policy = DeliveryCtx.Spec.PoseUpdatePolicy;
+
+	bool bKinematicPose = (Policy != EDeliveryPoseUpdatePolicyV3::OnStart);
+
+	// Interval gating for pose updates (optional)
+	if (bKinematicPose && Policy == EDeliveryPoseUpdatePolicyV3::Interval && DeliveryCtx.Spec.PoseUpdateInterval > 0.f)
+	{
+		DeliveryCtx.PoseAccum += DtFrame;
+		if (DeliveryCtx.PoseAccum < DeliveryCtx.Spec.PoseUpdateInterval)
+		{
+			// No pose update this frame; treat as no movement
+		}
+		else
+		{
+			DeliveryCtx.PoseAccum = 0.f;
+		}
+	}
+
+	// Apply pose update if kinematic and either EveryTick, or Interval fired, or no interval configured
+	const bool bDoPoseUpdate =
+		bKinematicPose &&
+		(Policy == EDeliveryPoseUpdatePolicyV3::EveryTick ||
+		 DeliveryCtx.Spec.PoseUpdateInterval <= 0.f ||
+		 DeliveryCtx.PoseAccum == 0.f);
+
+	if (bDoPoseUpdate)
+	{
+		if (bHasRig)
+		{
+			FDeliveryRigEvalResultV3 RigOut;
+			FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
+			Position = RigOut.Root.Location;
+		}
+		else
+		{
+			const FTransform Xf = ResolveAttachTransform(Ctx);
+			Position = Xf.GetLocation();
+		}
+	}
+	else if (!bKinematicPose)
+	{
+		IntegrateMotion(Ctx, DtSim);
+	}
+
 	const FVector NewPos = Position;
+
 
 	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawPath)
 	{

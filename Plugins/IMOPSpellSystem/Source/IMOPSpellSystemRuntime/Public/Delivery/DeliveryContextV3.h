@@ -23,6 +23,12 @@ struct FDeliveryContextV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	int32 EmitterIndex = -1;
 	
+	// Which rig slot override produced this primitive (useful for authoring & filtering).
+	// 0 = default slot.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	int32 SpawnSlot = 0;
+
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliverySpecV3 Spec;
 

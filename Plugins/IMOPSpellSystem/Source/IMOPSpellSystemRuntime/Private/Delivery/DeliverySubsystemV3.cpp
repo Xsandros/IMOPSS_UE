@@ -347,6 +347,7 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Dctx.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
 		Dctx.Seed = Seed;
 		Dctx.EmitterIndex = (EmitterCount > 0) ? EmitterIndex : INDEX_NONE;
+		Dctx.SpawnSlot    = SpawnSlot;
 		Dctx.PrimitiveId  = BuildPrimitiveId(Dctx.Handle.DeliveryId, Dctx.Handle.InstanceIndex, Dctx.EmitterIndex, SpawnSlot);
 		
 		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(SpecInst.Kind).Get();
@@ -539,18 +540,27 @@ void UDeliverySubsystemV3::EmitDeliveryEvent(const FSpellExecContextV3& Ctx, con
 	// ---- Fix payload first (PrimitiveId etc.) ----
 	FDeliveryEventContextV3 PayloadFixed = Payload;
 
-	if (PayloadFixed.PrimitiveId.IsNone())
+	// Fill missing emitter/slot info from the active delivery context (authoring-friendly).
+	if (const FDeliveryContextV3* Found = ActiveDelivery.Find(PayloadFixed.Handle))
 	{
-		// If caller didn’t set it, derive from active delivery ctx.
-		if (const FDeliveryContextV3* Found = ActiveDelivery.Find(PayloadFixed.Handle))
+		// PrimitiveId should already be handled, but keep it robust:
+		if (PayloadFixed.PrimitiveId.IsNone())
 		{
 			PayloadFixed.PrimitiveId = Found->PrimitiveId;
 		}
-		else
+
+		if (PayloadFixed.EmitterIndex == -1)
 		{
-			PayloadFixed.PrimitiveId = "P0";
+			PayloadFixed.EmitterIndex = Found->EmitterIndex;
+		}
+
+		if (PayloadFixed.SpawnSlot == 0)
+		{
+			// Only overwrite if payload didn't explicitly set a slot.
+			PayloadFixed.SpawnSlot = Found->SpawnSlot;
 		}
 	}
+
 
 	// ---- Emit normal delivery event (existing behavior) ----
 	FSpellEventV3 Ev;
@@ -564,13 +574,15 @@ void UDeliverySubsystemV3::EmitDeliveryEvent(const FSpellExecContextV3& Ctx, con
 	Ev.Data.InitializeAs<FDeliveryEventContextV3>(PayloadFixed);
 
 	UE_LOG(LogIMOPDeliveryV3, Verbose,
-		TEXT("EmitDeliveryEvent: %s Hits=%d Id=%s Inst=%d PrimitiveId=%s Stop=%d"),
+		TEXT("EmitDeliveryEvent: %s Hits=%d Id=%s Inst=%d PrimitiveId=%s Stop=%d EmitterIndex=%d Slot=%d"),
 		*EventTag.ToString(),
 		PayloadFixed.Hits.Num(),
 		*PayloadFixed.Handle.DeliveryId.ToString(),
 		PayloadFixed.Handle.InstanceIndex,
 		*PayloadFixed.PrimitiveId.ToString(),
-		(int32)PayloadFixed.StopReminder);
+		(int32)PayloadFixed.StopReminder,
+		PayloadFixed.EmitterIndex,
+PayloadFixed.SpawnSlot);
 
 	Ctx.EventBus->Emit(Ev);
 

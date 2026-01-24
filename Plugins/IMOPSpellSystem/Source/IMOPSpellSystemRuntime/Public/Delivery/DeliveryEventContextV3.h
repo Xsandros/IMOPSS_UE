@@ -51,7 +51,15 @@ struct FDeliveryEventContextV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FName PrimitiveId = "P0";
 
+	// Emitter index that produced this event (-1 for root/single primitive).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	int32 EmitterIndex = -1;
 
+	// Rig slot used for this primitive (0=default). Useful for per-slot authoring.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	int32 SpawnSlot = 0;
+
+	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	EDeliveryStopReasonV3 StopReminder = EDeliveryStopReasonV3::Manual;
 

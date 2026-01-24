@@ -38,6 +38,20 @@ struct FSpellTriggerMatcherV3
 	// If true, invert the primitive filter (exclude instead of include)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Trigger|Filters", meta=(EditCondition="bFilterByPrimitiveId"))
 	bool bInvertPrimitiveFilter = false;
+	
+	// --- Delivery-specific int filters (string-free) ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Trigger|Filters")
+	bool bFilterByEmitterIndex = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Trigger|Filters", meta=(EditCondition="bFilterByEmitterIndex"))
+	int32 EmitterIndex = -1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Trigger|Filters")
+	bool bFilterBySpawnSlot = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Trigger|Filters", meta=(EditCondition="bFilterBySpawnSlot"))
+	int32 SpawnSlot = 0;
+
 
 	// Tag-only match (kept for existing callsites)
 	bool Matches(const FGameplayTag& InTag) const
@@ -79,6 +93,23 @@ struct FSpellTriggerMatcherV3
 			return false;
 		}
 
+		if (bFilterByEmitterIndex)
+		{
+			if (D->EmitterIndex != EmitterIndex)
+			{
+				return false;
+			}
+		}
+
+		if (bFilterBySpawnSlot)
+		{
+			if (D->SpawnSlot != SpawnSlot)
+			{
+				return false;
+			}
+		}
+
+		
 		const FName Pid = D->PrimitiveId;
 
 		bool bOk = false;
@@ -101,5 +132,7 @@ struct FSpellTriggerMatcherV3
 			bOk = !bOk;
 		}
 		return bOk;
+		
+		
 	}
 };

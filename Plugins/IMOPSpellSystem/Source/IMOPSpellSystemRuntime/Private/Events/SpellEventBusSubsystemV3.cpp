@@ -81,10 +81,11 @@ void USpellEventBusSubsystemV3::Emit(const FSpellEventV3& Ev)
         UObject* L = S.Listener.Get();
         if (!L) continue;
 
-        if (!S.Matcher.Matches(Ev.EventTag))
+        if (!S.Matcher.MatchesEvent(Ev))
         {
             continue;
         }
+
 
         ISpellEventListenerV3* AsListener = Cast<ISpellEventListenerV3>(L);
         if (!AsListener)

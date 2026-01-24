@@ -158,8 +158,11 @@ void USpellRuntimeV3::OnSpellEvent(const FSpellEventV3& Ev)
                 *Ev.EventTag.ToString());
             continue;
         }
+        if (H.Trigger.MatchesEvent(Ev))
+        {
+            FSpellVMV3::ExecuteActions(*this, H.Actions);
+        }
 
-        FSpellVMV3::ExecuteActions(*this, H.Actions);
 
         UE_LOG(LogIMOPSpellRuntimeV3, Log,
             TEXT("Handler DONE: tag=%s"),
@@ -188,7 +191,11 @@ void USpellRuntimeV3::OnSpellEvent(const FSpellEventV3& Ev)
             continue;
         }
 
-        FSpellVMV3::ExecuteActions(*this, P.Actions);
+        if (P.Trigger.MatchesEvent(Ev))
+        {
+            FSpellVMV3::ExecuteActions(*this, P.Actions);
+        }
+
 
         UE_LOG(LogIMOPSpellRuntimeV3, Log,
             TEXT("Phase DONE: tag=%s"),

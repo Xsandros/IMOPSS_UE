@@ -25,6 +25,167 @@ static FName BuildPrimitiveId(FName DeliveryId, int32 InstanceIndex, int32 Emitt
 	return FName(*FString::Printf(TEXT("%s_I%d"), *DeliveryId.ToString(), InstanceIndex));
 }
 
+static void AppendTags(FGameplayTagContainer& InOut, const FGameplayTagContainer& Add)
+{
+	if (!Add.IsEmpty())
+	{
+		InOut.AppendTags(Add);
+	}
+}
+
+static void AppendEventHitTags(FDeliveryEventHitTagsV3& InOut, const FDeliveryEventHitTagsV3& Add)
+{
+	AppendTags(InOut.Started, Add.Started);
+	AppendTags(InOut.Stopped, Add.Stopped);
+	AppendTags(InOut.Hit,     Add.Hit);
+	AppendTags(InOut.Enter,   Add.Enter);
+	AppendTags(InOut.Stay,    Add.Stay);
+	AppendTags(InOut.Exit,    Add.Exit);
+	AppendTags(InOut.Tick,    Add.Tick);
+}
+
+static void ApplyInstanceOverrideToSpec(const FDeliveryInstanceOverrideV3& O, FDeliverySpecV3& InOut)
+{
+	// Hard overrides
+	if (O.bOverrideKind)       { InOut.Kind       = O.Kind; }
+	if (O.bOverrideShape)      { InOut.Shape      = O.Shape; }
+	if (O.bOverrideQuery)      { InOut.Query      = O.Query; }
+	if (O.bOverrideStopPolicy) { InOut.StopPolicy = O.StopPolicy; }
+	if (O.bOverrideOutTargetSet){ InOut.OutTargetSet = O.OutTargetSet; }
+
+	// Additive tag modifiers
+	AppendTags(InOut.DeliveryTags, O.AddDeliveryTags);
+	AppendTags(InOut.HitTags,      O.AddHitTags);
+	AppendEventHitTags(InOut.EventHitTags, O.AddEventHitTags);
+
+	// Typed config overrides (only meaningful when the active Kind matches,
+	// but we still allow writing them so authoring is stable).
+	if (O.bOverrideInstantQuery) { InOut.InstantQuery = O.InstantQuery; }
+	if (O.bOverrideField)        { InOut.Field        = O.Field; }
+	if (O.bOverrideMover)        { InOut.Mover        = O.Mover; }
+	if (O.bOverrideBeam)         { InOut.Beam         = O.Beam; }
+}
+
+static const TCHAR* DeliveryKindToStr(EDeliveryKindV3 K)
+{
+	switch (K)
+	{
+	case EDeliveryKindV3::InstantQuery: return TEXT("InstantQuery");
+	case EDeliveryKindV3::Field:        return TEXT("Field");
+	case EDeliveryKindV3::Mover:        return TEXT("Mover");
+	case EDeliveryKindV3::Beam:         return TEXT("Beam");
+	default:                            return TEXT("Unknown");
+	}
+}
+
+static const TCHAR* ShapeToStr(EDeliveryShapeV3 S)
+{
+	switch (S)
+	{
+	case EDeliveryShapeV3::Sphere:  return TEXT("Sphere");
+	case EDeliveryShapeV3::Capsule: return TEXT("Capsule");
+	case EDeliveryShapeV3::Box:     return TEXT("Box");
+	case EDeliveryShapeV3::Ray:     return TEXT("Ray");
+	default:                        return TEXT("Unknown");
+	}
+}
+
+static const TCHAR* QueryModeToStr(EDeliveryQueryModeV3 M)
+{
+	switch (M)
+	{
+	case EDeliveryQueryModeV3::Overlap:   return TEXT("Overlap");
+	case EDeliveryQueryModeV3::Sweep:    return TEXT("Sweep");
+	case EDeliveryQueryModeV3::LineTrace:return TEXT("LineTrace");
+	default:                             return TEXT("Unknown");
+	}
+}
+
+static void LogEffectiveSpecPerPrimitive(const FDeliveryContextV3& Dctx, const FDeliverySpecV3& Spec)
+{
+	// Core summary (always)
+	UE_LOG(LogIMOPDeliveryV3, Log,
+		TEXT("EffectiveSpec: Id=%s Inst=%d Primitive=%s E=%d Slot=%d Kind=%s Shape=%s (R=%.1f HH=%.1f Ext=%s) Query=%s Profile=%s IgnoreCaster=%d Stop(Max=%.2f FirstHit=%d) OutSet=%s Tags(D=%d H=%d)"),
+		*Dctx.Handle.DeliveryId.ToString(),
+		Dctx.Handle.InstanceIndex,
+		*Dctx.PrimitiveId.ToString(),
+		Dctx.EmitterIndex,
+		Dctx.SpawnSlot,
+		DeliveryKindToStr(Spec.Kind),
+		ShapeToStr(Spec.Shape.Kind),
+		Spec.Shape.Radius,
+		Spec.Shape.HalfHeight,
+		*Spec.Shape.Extents.ToString(),
+		QueryModeToStr(Spec.Query.Mode),
+		*Spec.Query.CollisionProfile.ToString(),
+		Spec.Query.bIgnoreCaster ? 1 : 0,
+		Spec.StopPolicy.MaxDuration,
+		Spec.StopPolicy.bStopOnFirstHit ? 1 : 0,
+		*Spec.OutTargetSet.ToString(),
+		Spec.DeliveryTags.Num(),
+		Spec.HitTags.Num());
+
+	// Typed config summary (only the active kind)
+	switch (Spec.Kind)
+	{
+	case EDeliveryKindV3::InstantQuery:
+		UE_LOG(LogIMOPDeliveryV3, Log,
+			TEXT("EffectiveSpec.InstantQuery: Range=%.1f MaxHits=%d MultiHit=%d"),
+			Spec.InstantQuery.Range,
+			Spec.InstantQuery.MaxHits,
+			Spec.InstantQuery.bMultiHit ? 1 : 0);
+		break;
+
+	case EDeliveryKindV3::Field:
+		UE_LOG(LogIMOPDeliveryV3, Log,
+			TEXT("EffectiveSpec.Field: Tick=%.3f EnterExit=%d Stay=%d StayPerTick=%d"),
+			Spec.Field.TickInterval,
+			Spec.Field.bEmitEnterExit ? 1 : 0,
+			Spec.Field.bEmitStay ? 1 : 0,
+			Spec.Field.bStayPerTick ? 1 : 0);
+		break;
+
+	case EDeliveryKindV3::Mover:
+		UE_LOG(LogIMOPDeliveryV3, Log,
+			TEXT("EffectiveSpec.Mover: Motion=%d Speed=%.1f MaxDist=%.1f Tick=%.3f StopOnHit=%d Pierce=%d MaxPierce=%d Grav=%.2f HomingStr=%.2f HomingSet=%s"),
+			(int32)Spec.Mover.Motion,
+			Spec.Mover.Speed,
+			Spec.Mover.MaxDistance,
+			Spec.Mover.TickInterval,
+			Spec.Mover.bStopOnHit ? 1 : 0,
+			Spec.Mover.bPierce ? 1 : 0,
+			Spec.Mover.MaxPierceHits,
+			Spec.Mover.GravityScale,
+			Spec.Mover.HomingStrength,
+			*Spec.Mover.HomingTargetSet.ToString());
+		break;
+
+	case EDeliveryKindV3::Beam:
+		UE_LOG(LogIMOPDeliveryV3, Log,
+			TEXT("EffectiveSpec.Beam: Range=%.1f Tick=%.3f Radius=%.1f LockOn=%d LockSet=%s"),
+			Spec.Beam.Range,
+			Spec.Beam.TickInterval,
+			Spec.Beam.Radius,
+			Spec.Beam.bLockOnTarget ? 1 : 0,
+			*Spec.Beam.LockTargetSet.ToString());
+		break;
+
+	default:
+		break;
+	}
+
+	// Optional: per-event tag mods count (helps verify overrides)
+	UE_LOG(LogIMOPDeliveryV3, Verbose,
+		TEXT("EffectiveSpec.EventHitTags: Started=%d Stopped=%d Hit=%d Enter=%d Stay=%d Exit=%d Tick=%d"),
+		Spec.EventHitTags.Started.Num(),
+		Spec.EventHitTags.Stopped.Num(),
+		Spec.EventHitTags.Hit.Num(),
+		Spec.EventHitTags.Enter.Num(),
+		Spec.EventHitTags.Stay.Num(),
+		Spec.EventHitTags.Exit.Num(),
+		Spec.EventHitTags.Tick.Num());
+}
+
 
 static void UpdateDeliveryPoseIfNeeded(const FSpellExecContextV3& Ctx, FDeliveryContextV3& Dctx, float DeltaSeconds)
 {
@@ -342,7 +503,35 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 
 		FDeliveryContextV3 Dctx;
 		Dctx.Handle = Handle;
-		Dctx.Spec = SpecInst;
+
+		// Build an effective per-primitive spec:
+		// 1) base spec
+		// 2) slot override (SpawnSlot)
+		// 3) instance override (EmitterIndex)
+		FDeliverySpecV3 EffectiveSpec = Spec;
+
+		if (Spec.SlotOverrides.IsValidIndex(SpawnSlot))
+		{
+			ApplyInstanceOverrideToSpec(Spec.SlotOverrides[SpawnSlot], EffectiveSpec);
+
+			UE_LOG(LogIMOPDeliveryV3, Verbose,
+				TEXT("StartDelivery Override: Slot=%d applied (Id=%s)"),
+				SpawnSlot,
+				*Spec.DeliveryId.ToString());
+		}
+
+		if (EmitterIndex >= 0 && Spec.InstanceOverrides.IsValidIndex(EmitterIndex))
+		{
+			ApplyInstanceOverrideToSpec(Spec.InstanceOverrides[EmitterIndex], EffectiveSpec);
+
+			UE_LOG(LogIMOPDeliveryV3, Verbose,
+				TEXT("StartDelivery Override: Emitter=%d applied (Id=%s)"),
+				EmitterIndex,
+				*Spec.DeliveryId.ToString());
+		}
+
+		Dctx.Spec = EffectiveSpec;
+
 		Dctx.Caster = Ctx.Caster;
 		Dctx.StartTime = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : 0.f;
 		Dctx.Seed = Seed;
@@ -350,10 +539,13 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Dctx.SpawnSlot    = SpawnSlot;
 		Dctx.PrimitiveId  = BuildPrimitiveId(Dctx.Handle.DeliveryId, Dctx.Handle.InstanceIndex, Dctx.EmitterIndex, SpawnSlot);
 		
-		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(SpecInst.Kind).Get();
+		LogEffectiveSpecPerPrimitive(Dctx, EffectiveSpec);
+
+		
+		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(EffectiveSpec.Kind).Get();
 		if (!Driver)
 		{
-			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery failed: driver create failed (Kind=%d)"), (int32)SpecInst.Kind);
+			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery failed: driver create failed (Kind=%d)"), (int32)EffectiveSpec.Kind);
 			if (FirstHandle.IsValid())
 			{
 				StopById(Ctx, SpecInst.DeliveryId, EDeliveryStopReasonV3::Failed);

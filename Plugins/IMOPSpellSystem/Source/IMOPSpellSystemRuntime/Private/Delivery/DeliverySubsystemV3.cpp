@@ -7,6 +7,7 @@
 #include "Core/SpellGameplayTagsV3.h"
 #include "Delivery/Drivers/DeliveryDriver_FieldV3.h"
 #include "Delivery/Drivers/DeliveryDriver_MoverV3.h"
+#include "Delivery/Drivers/DeliveryDriver_BeamV3.h"
 #include "Events/SpellEventBusSubsystemV3.h"
 #include "Events/SpellEventV3.h"
 #include "Runtime/SpellRuntimeV3.h"
@@ -366,18 +367,16 @@ TObjectPtr<UDeliveryDriverBaseV3> UDeliverySubsystemV3::CreateDriverForKind(EDel
 {
 	switch (Kind)
 	{
-	case EDeliveryKindV3::InstantQuery:
-		return NewObject<UDeliveryDriver_InstantQueryV3>(this);
-	case EDeliveryKindV3::Field:
-		return NewObject<UDeliveryDriver_FieldV3>(this);
-	case EDeliveryKindV3::Mover: return NewObject<UDeliveryDriver_MoverV3>(this);
-
-
+	case EDeliveryKindV3::InstantQuery: return NewObject<UDeliveryDriver_InstantQueryV3>(this);
+	case EDeliveryKindV3::Field:        return NewObject<UDeliveryDriver_FieldV3>(this);
+	case EDeliveryKindV3::Mover:        return NewObject<UDeliveryDriver_MoverV3>(this);
+	case EDeliveryKindV3::Beam:         return NewObject<UDeliveryDriver_BeamV3>(this);
 	default:
 		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("CreateDriverForKind: Kind %d not implemented yet"), (int32)Kind);
 		return nullptr;
 	}
 }
+
 
 static void ApplyInstanceOverride(FDeliverySpecV3& InOutSpec, const FDeliveryInstanceOverrideV3& Ovr)
 {

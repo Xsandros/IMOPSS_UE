@@ -1,73 +1,45 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Actions/SpellActionExecutorV3.h"
-#include "Delivery/DeliveryContextV3.h"
 #include "Delivery/Rig/DeliveryRigV3.h"
+#include "Delivery/DeliveryTypesV3.h"
+
 #include "DeliveryRigEvaluatorV3.generated.h"
 
-USTRUCT(BlueprintType)
-struct FDeliveryRigPoseV3
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FVector Location = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FRotator Rotation = FRotator::ZeroRotator;
-
-	// Explicit direction for deliveries (trace / projectile heading). If zero, drivers may fallback to Rotation.Vector().
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FVector Forward = FVector::ForwardVector;
-};
-
-
-USTRUCT(BlueprintType)
-struct FDeliveryRigEmitterV3
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FDeliveryRigPoseV3 Pose;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	int32 SpawnSlot = 0;
-};
-
-
+/**
+ * Result of evaluating a DeliveryRig at a given time.
+ * World-space transforms (WS).
+ */
 USTRUCT(BlueprintType)
 struct FDeliveryRigEvalResultV3
 {
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FDeliveryRigPoseV3 Root;
+	FTransform RootWorld = FTransform::Identity;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	TArray<FDeliveryRigEmitterV3> Emitters;
+	TArray<FTransform> EmittersWorld;
 };
 
-struct IMOPSPELLSYSTEMRUNTIME_API FDeliveryRigEvaluatorV3
+/**
+ * Stateless evaluator: given a Rig graph + attach mode, produce Root + Emitters world transforms.
+ */
+UCLASS()
+class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigEvaluatorV3 : public UObject
 {
-	// Default: uses world time from Ctx (if available)
-	static bool Evaluate(
-		const FSpellExecContextV3& Ctx,
-		const FDeliveryContextV3& DeliveryCtx,
-		const FDeliveryRigV3& Rig,
-		FDeliveryRigEvalResultV3& OutResult);
+	GENERATED_BODY()
 
-	// Time-aware evaluation (NowSeconds usually = World->GetTimeSeconds()).
-	// Nodes can use Elapsed = NowSeconds - DeliveryCtx.StartTime.
-	static bool Evaluate(
-		const FSpellExecContextV3& Ctx,
-		const FDeliveryContextV3& DeliveryCtx,
-		const FDeliveryRigV3& Rig,
-		float NowSeconds,
-		FDeliveryRigEvalResultV3& OutResult);
-};
-
-struct IMOPSPELLSYSTEMRUNTIME_API FDeliveryRigPoseSelectorV3
-{
-	static const FDeliveryRigPoseV3& SelectPose(const FDeliveryRigEvalResultV3& RigOut, int32 EmitterIndex);
+public:
+	/**
+	 * Evaluate the rig at time t (seconds since group start).
+	 */
+	static void Evaluate(
+		UWorld* World,
+		AActor* Caster,
+		const FDeliveryAttachV3& Attach,
+		const UDeliveryRigV3* Rig,
+		float TimeSeconds,
+		FDeliveryRigEvalResultV3& OutResult
+	);
 };

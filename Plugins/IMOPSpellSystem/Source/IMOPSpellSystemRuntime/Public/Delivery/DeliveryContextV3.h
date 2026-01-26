@@ -5,46 +5,46 @@
 #include "Delivery/DeliverySpecV3.h"
 #include "DeliveryContextV3.generated.h"
 
-// Runtime context for ONE primitive inside a composite group.
+/**
+ * Per-primitive runtime context (created by subsystem, updated when rig updates).
+ * This is passed into drivers on Start, and drivers can read live versions from GroupRuntime.
+ */
 USTRUCT(BlueprintType)
 struct FDeliveryContextV3
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	// Group identity
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
 	FDeliveryHandleV3 GroupHandle;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FName PrimitiveId = "P0";
+	// Primitive identity
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
+	FName PrimitiveId = NAME_None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
 	int32 PrimitiveIndex = 0;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	int32 EmitterIndex = -1;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	int32 SpawnSlot = 0;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	float StartTimeSeconds = 0.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	int32 Seed = 0;
-
-	// Snapshot of spec data for this primitive
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	// Authoring spec snapshot for this primitive
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
 	FDeliveryPrimitiveSpecV3 Spec;
 
-	// Cached anchor pose for this primitive (updated by group rig policy)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	// Caster snapshot (weak)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
+	TWeakObjectPtr<AActor> Caster;
+
+	// Time/seed
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
+	float StartTimeSeconds = 0.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
+	int32 Seed = 0;
+
+	// Anchor pose (from Rig/Attach)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
 	FTransform AnchorPoseWS = FTransform::Identity;
 
-	// Cached final pose (Anchor + local offsets + motion), if you want it.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	// Final pose after motion (future: per-primitive motion stacks)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
 	FTransform FinalPoseWS = FTransform::Identity;
-
-	// Runtime-resolved references (optional)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	TWeakObjectPtr<AActor> Caster;
 };

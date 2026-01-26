@@ -2,14 +2,19 @@
 
 #include "CoreMinimal.h"
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
+
 #include "DeliveryDriver_FieldV3.generated.h"
 
+class UDeliveryGroupRuntimeV3;
+
 /**
- * Field driver (Composite-first):
- * - Periodically evaluates an overlap/sweep volume at PrimitiveCtx.FinalPoseWS.
- * - Writes current members into TargetStore (OutTargetSetName / group default).
- * - Optional enter/exit bookkeeping (for later events); currently only logs when enabled.
- * - Debug draw volume + member points.
+ * Field driver (Composite-first)
+ * - Ticks at Spec.Field.TickInterval
+ * - Uses PrimitiveCtx.FinalPoseWS as center (already includes AnchorRef)
+ * - Overlap sphere/box/capsule based on Spec.Shape (default sphere)
+ * - Optional Enter/Exit events (Spec.Field.bEmitEnterExit)
+ * - Emits Stay every evaluation if there are occupants
+ * - Writes occupants into TargetStore (Primitive OutTargetSetName or Group default)
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_FieldV3 : public UDeliveryDriverBaseV3
@@ -26,15 +31,14 @@ private:
 	FDeliveryContextV3 LocalCtx;
 
 	UPROPERTY()
-	float NextEvalTimeSeconds = 0.f;
+	float TimeSinceLastEval = 0.f;
 
-	// last evaluated members (raw pointers for speed; lifetime guarded by world checks)
-	TSet<TWeakObjectPtr<AActor>> LastMembers;
+	// Current occupants of the field (weak pointers, no ownership)
+	TSet<TWeakObjectPtr<AActor>> CurrentSet;
 
 private:
 	static FName ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
+	static void BuildSortedActorsDeterministic(const TSet<TWeakObjectPtr<AActor>>& InSet, TArray<AActor*>& OutActors);
 
-	bool EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
-
-	static void AddHitActorsUnique(const TArray<FHitResult>& Hits, TArray<TWeakObjectPtr<AActor>>& OutActors);
+	void Evaluate(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group);
 };

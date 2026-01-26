@@ -3,14 +3,43 @@
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
 
+#include "Actions/SpellActionExecutorV3.h"
+#include "Runtime/SpellRuntimeV3.h"
+
 #include "Stores/SpellTargetStoreV3.h"
 #include "Targeting/TargetingTypesV3.h"
+
+#include "Core/SpellGameplayTagsV3.h"
+#include "Events/SpellEventBusSubsystemV3.h"
+#include "Events/SpellEventV3.h"
 
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "CollisionShape.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPDeliveryInstantQueryV3, Log, All);
+
+static USpellEventBusSubsystemV3* ResolveEventBus(const FSpellExecContextV3& Ctx)
+{
+	if (USpellEventBusSubsystemV3* Bus = Cast<USpellEventBusSubsystemV3>(Ctx.EventBus.Get()))
+	{
+		return Bus;
+	}
+	if (UWorld* W = Ctx.GetWorld())
+	{
+		return W->GetGameInstance() ? W->GetGameInstance()->GetSubsystem<USpellEventBusSubsystemV3>() : nullptr;
+	}
+	return nullptr;
+}
+
+static FGuid ResolveRuntimeGuid(const FSpellExecContextV3& Ctx)
+{
+	if (USpellRuntimeV3* R = Cast<USpellRuntimeV3>(Ctx.Runtime.Get()))
+	{
+		return R->GetRuntimeGuid();
+	}
+	return FGuid();
+}
 
 FName UDeliveryDriver_InstantQueryV3::ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
 {
@@ -39,38 +68,17 @@ void UDeliveryDriver_InstantQueryV3::SortHitsDeterministic(TArray<FHitResult>& H
 	});
 }
 
-static FCollisionShape MakeShape(const FDeliveryShapeV3& S)
-{
-	switch (S.Kind)
-	{
-		case EDeliveryShapeV3::Sphere:  return FCollisionShape::MakeSphere(FMath::Max(0.f, S.Radius));
-		case EDeliveryShapeV3::Capsule: return FCollisionShape::MakeCapsule(FMath::Max(0.f, S.Radius), FMath::Max(0.f, S.HalfHeight));
-		case EDeliveryShapeV3::Box:     return FCollisionShape::MakeBox(S.Extents);
-		case EDeliveryShapeV3::Ray:
-		default:
-			return FCollisionShape::MakeSphere(0.f);
-	}
-}
-
 void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
 {
 	LocalCtx = PrimitiveCtx;
-
 	GroupHandle = PrimitiveCtx.GroupHandle;
 	PrimitiveId = PrimitiveCtx.PrimitiveId;
 	bActive = true;
 
-	if (!Ctx.GetWorld() || !Group)
-	{
-		UE_LOG(LogIMOPDeliveryInstantQueryV3, Error, TEXT("InstantQuery Start failed: World/Group missing"));
-		Stop(Ctx, Group, EDeliveryStopReasonV3::Failed);
-		return;
-	}
+	const bool bAny = EvaluateOnce(Ctx, Group, PrimitiveCtx);
 
-	EvaluateOnce(Ctx, Group, PrimitiveCtx);
-
-	// InstantQuery ends immediately
-	Stop(Ctx, Group, EDeliveryStopReasonV3::OnFirstHit);
+	// Instant query ends immediately
+	Stop(Ctx, Group, bAny ? EDeliveryStopReasonV3::OnFirstHit : EDeliveryStopReasonV3::Expired);
 }
 
 bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
@@ -82,10 +90,11 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	}
 
 	const FDeliveryPrimitiveSpecV3& Spec = PrimitiveCtx.Spec;
+	const FDeliveryInstantQueryConfigV3& Q = Spec.InstantQuery;
 
 	const FVector From = PrimitiveCtx.FinalPoseWS.GetLocation();
 	const FVector Dir = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
-	const float Range = FMath::Max(0.f, Spec.InstantQuery.Range);
+	const float Range = FMath::Max(0.f, Q.Range);
 	const FVector To = From + Dir * Range;
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_InstantQuery), /*bTraceComplex*/ false);
@@ -102,22 +111,43 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	TArray<FHitResult> Hits;
 	bool bAny = false;
 
-	// Ray/LineTrace => trace; otherwise sweep/overlap
-	const bool bRay = (Spec.Shape.Kind == EDeliveryShapeV3::Ray) || (Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace);
-
-	if (bRay)
+	// Mode selection: Ray => LineTrace, otherwise Sweep/Overlap depending on spec
+	if (Spec.Shape.Kind == EDeliveryShapeV3::Ray || Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace)
 	{
-		bAny = World->LineTraceMultiByProfile(Hits, From, To, Profile, Params);
-	}
-	else if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
-	{
-		const FCollisionShape CS = MakeShape(Spec.Shape);
-		bAny = World->OverlapMultiByProfile(Hits, To, FQuat::Identity, Profile, CS, Params);
+		if (Q.bMultiHit)
+		{
+			bAny = World->LineTraceMultiByProfile(Hits, From, To, Profile, Params);
+		}
+		else
+		{
+			FHitResult& One = Hits.AddDefaulted_GetRef();
+			bAny = World->LineTraceSingleByProfile(One, From, To, Profile, Params);
+			if (!bAny)
+			{
+				Hits.Reset();
+			}
+		}
 	}
 	else
 	{
-		const FCollisionShape CS = MakeShape(Spec.Shape);
-		bAny = World->SweepMultiByProfile(Hits, From, To, FQuat::Identity, Profile, CS, Params);
+		FCollisionShape CS;
+		switch (Spec.Shape.Kind)
+		{
+			case EDeliveryShapeV3::Sphere:   CS = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius)); break;
+			case EDeliveryShapeV3::Capsule:  CS = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight)); break;
+			case EDeliveryShapeV3::Box:      CS = FCollisionShape::MakeBox(Spec.Shape.Extents); break;
+			default:                         CS = FCollisionShape::MakeSphere(0.f); break;
+		}
+
+		// Sweep along the line; if author asked Overlap, do a stationary overlap at From.
+		if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
+		{
+			bAny = World->OverlapMultiByProfile(Hits, From, FQuat::Identity, Profile, CS, Params);
+		}
+		else
+		{
+			bAny = World->SweepMultiByProfile(Hits, From, To, FQuat::Identity, Profile, CS, Params);
+		}
 	}
 
 	if (bAny)
@@ -125,55 +155,42 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 		SortHitsDeterministic(Hits, From);
 	}
 
-	// Clamp hits
-	const int32 MaxHits = FMath::Max(1, Spec.InstantQuery.MaxHits);
-	const bool bMulti = Spec.InstantQuery.bMultiHit;
-
-	TArray<FHitResult> Final;
-	Final.Reserve(FMath::Min(MaxHits, Hits.Num()));
-	for (const FHitResult& H : Hits)
+	// Cap hits
+	const int32 MaxHits = FMath::Max(1, Q.MaxHits);
+	if (Hits.Num() > MaxHits)
 	{
-		if (!H.GetActor())
-		{
-			continue;
-		}
-		Final.Add(H);
-		if (!bMulti || Final.Num() >= MaxHits)
-		{
-			break;
-		}
+		Hits.SetNum(MaxHits);
 	}
 
-	// Debug
-	const FDeliveryDebugDrawConfigV3 DebugCfg =
-		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
-
+	// Debug draw
+	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 	if (DebugCfg.bEnable)
 	{
 		const float Dur = DebugCfg.Duration;
+
 		if (DebugCfg.bDrawPath)
 		{
-			DrawDebugLine(World, From, To, FColor::Cyan, false, Dur, 0, 1.5f);
-			DrawDebugDirectionalArrow(World, From, From + Dir * 120.f, 25.f, FColor::Cyan, false, Dur, 0, 1.5f);
+			DrawDebugLine(World, From, To, FColor::Cyan, false, Dur, 0, 2.0f);
+			DrawDebugDirectionalArrow(World, From, From + Dir * 120.f, 25.f, FColor::Cyan, false, Dur, 0, 2.0f);
 		}
+
 		if (DebugCfg.bDrawHits)
 		{
-			for (const FHitResult& H : Final)
+			for (const FHitResult& H : Hits)
 			{
 				DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, Dur);
-				DrawDebugLine(World, H.ImpactPoint, H.ImpactPoint + H.ImpactNormal * 30.f, FColor::Yellow, false, Dur, 0, 1.0f);
 			}
 		}
 	}
 
-	// Write back to TargetStore
+	// Write hits to TargetStore (optional)
 	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
 	if (OutSetName != NAME_None)
 	{
 		if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
 		{
 			FTargetSetV3 Out;
-			for (const FHitResult& H : Final)
+			for (const FHitResult& H : Hits)
 			{
 				if (AActor* A = H.GetActor())
 				{
@@ -186,10 +203,32 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 		}
 	}
 
-	return Final.Num() > 0;
+	// ===== Emit Event: Spell.Event.Delivery.Hit (if any)
+	if (Hits.Num() > 0)
+	{
+		if (USpellEventBusSubsystemV3* Bus = ResolveEventBus(Ctx))
+		{
+			const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+
+			FSpellEventV3 Ev;
+			Ev.EventTag = Tags.Event_Delivery_Hit;
+			Ev.RuntimeGuid = ResolveRuntimeGuid(Ctx);
+			Ev.Caster = Ctx.GetCaster();
+			Ev.Sender = Ctx.GetCaster();
+			Ev.FrameNumber = GFrameNumber;
+			Ev.TimeSeconds = World ? World->GetTimeSeconds() : 0.f;
+
+			Bus->Emit(Ev);
+		}
+	}
+
+	UE_LOG(LogIMOPDeliveryInstantQueryV3, Verbose, TEXT("InstantQuery: %s/%s hits=%d any=%d"),
+		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), Hits.Num(), bAny ? 1 : 0);
+
+	return bAny;
 }
 
-void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason)
+void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& /*Ctx*/, UDeliveryGroupRuntimeV3* /*Group*/, EDeliveryStopReasonV3 Reason)
 {
 	if (!bActive)
 	{
@@ -199,8 +238,5 @@ void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& Ctx, UDeliv
 	bActive = false;
 
 	UE_LOG(LogIMOPDeliveryInstantQueryV3, Log, TEXT("InstantQuery stopped: %s/%s inst=%d reason=%d"),
-		*GroupHandle.DeliveryId.ToString(),
-		*PrimitiveId.ToString(),
-		GroupHandle.InstanceIndex,
-		(int32)Reason);
+		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), GroupHandle.InstanceIndex, (int32)Reason);
 }

@@ -9,6 +9,7 @@
 
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 #include "CollisionShape.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPDeliveryFieldV3, Log, All);
@@ -26,42 +27,39 @@ FName UDeliveryDriver_FieldV3::ResolveOutTargetSetName(const UDeliveryGroupRunti
 	return NAME_None;
 }
 
-void UDeliveryDriver_FieldV3::AddHitActorsUnique(const TArray<FHitResult>& Hits, TArray<TWeakObjectPtr<AActor>>& OutActors)
+void UDeliveryDriver_FieldV3::BuildSortedActorsDeterministic(const TSet<TWeakObjectPtr<AActor>>& InSet, TArray<AActor*>& OutActors)
 {
-	for (const FHitResult& H : Hits)
+	OutActors.Reset();
+	for (const TWeakObjectPtr<AActor>& W : InSet)
 	{
-		if (AActor* A = H.GetActor())
+		if (AActor* A = W.Get())
 		{
-			OutActors.AddUnique(A);
+			OutActors.Add(A);
 		}
 	}
+
+	// Deterministic-ish order (stable within a run; good enough for MP server authority)
+	OutActors.Sort([](const AActor& A, const AActor& B)
+	{
+		return A.GetUniqueID() < B.GetUniqueID();
+	});
 }
 
 void UDeliveryDriver_FieldV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
 {
 	LocalCtx = PrimitiveCtx;
-
 	GroupHandle = PrimitiveCtx.GroupHandle;
 	PrimitiveId = PrimitiveCtx.PrimitiveId;
 	bActive = true;
 
-	UWorld* World = Ctx.GetWorld();
-	if (!World)
-	{
-		UE_LOG(LogIMOPDeliveryFieldV3, Error, TEXT("Field Start failed: World is null"));
-		Stop(Ctx, Group, EDeliveryStopReasonV3::Failed);
-		return;
-	}
+	TimeSinceLastEval = 0.f;
+	CurrentSet.Reset();
 
-	NextEvalTimeSeconds = World->GetTimeSeconds();
-	LastMembers.Reset();
+	// Primitive started event (consistent with other drivers)
+	EmitPrimitiveStarted(Ctx);
 
-	// Optional immediate eval
-	EvaluateOnce(Ctx, Group, PrimitiveCtx);
-
-	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field started: %s/%s"),
-		*GroupHandle.DeliveryId.ToString(),
-		*PrimitiveId.ToString());
+	// Evaluate immediately once so the field is “live” on start
+	Evaluate(Ctx, Group);
 }
 
 void UDeliveryDriver_FieldV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds)
@@ -71,41 +69,36 @@ void UDeliveryDriver_FieldV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGrou
 		return;
 	}
 
-	UWorld* World = Ctx.GetWorld();
-	if (!World)
+	// Emit primitive tick (for analytics/debug; cheap)
+	EmitPrimitiveTick(Ctx, DeltaSeconds);
+
+	TimeSinceLastEval += DeltaSeconds;
+
+	const float Interval = FMath::Max(0.f, LocalCtx.Spec.Field.TickInterval);
+	if (Interval > 0.f && TimeSinceLastEval < Interval)
 	{
 		return;
 	}
 
-	// Use live ctx (rig updates)
-	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
-	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
-
-	const float Now = World->GetTimeSeconds();
-	const float Interval = FMath::Max(0.f, PCtx.Spec.Field.TickInterval);
-
-	if (Interval > 0.f && Now < NextEvalTimeSeconds)
-	{
-		return;
-	}
-
-	NextEvalTimeSeconds = (Interval > 0.f) ? (Now + Interval) : Now;
-
-	EvaluateOnce(Ctx, Group, PCtx);
+	TimeSinceLastEval = 0.f;
+	Evaluate(Ctx, Group);
 }
 
-bool UDeliveryDriver_FieldV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
+void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group)
 {
 	UWorld* World = Ctx.GetWorld();
 	if (!World || !Group)
 	{
-		return false;
+		return;
 	}
 
-	const FDeliveryPrimitiveSpecV3& Spec = PrimitiveCtx.Spec;
+	const FDeliveryPrimitiveSpecV3& Spec = LocalCtx.Spec;
 
-	const FVector Center = PrimitiveCtx.FinalPoseWS.GetLocation();
-	const FQuat Rot = PrimitiveCtx.FinalPoseWS.GetRotation();
+	// Center: already includes AnchorRef -> FinalPoseWS
+	const FVector Center = LocalCtx.FinalPoseWS.GetLocation();
+
+	// Collision profile
+	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("OverlapAllDynamic");
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)
@@ -116,126 +109,135 @@ bool UDeliveryDriver_FieldV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeli
 		}
 	}
 
-	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("Visibility");
-
-	FCollisionShape CS;
+	FCollisionShape Shape;
 	switch (Spec.Shape.Kind)
 	{
-		case EDeliveryShapeV3::Sphere:  CS = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius)); break;
-		case EDeliveryShapeV3::Capsule: CS = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight)); break;
-		case EDeliveryShapeV3::Box:     CS = FCollisionShape::MakeBox(Spec.Shape.Extents); break;
-		case EDeliveryShapeV3::Ray:
+		case EDeliveryShapeV3::Sphere:
+			Shape = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius));
+			break;
+		case EDeliveryShapeV3::Capsule:
+			Shape = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight));
+			break;
+		case EDeliveryShapeV3::Box:
+			Shape = FCollisionShape::MakeBox(Spec.Shape.Extents);
+			break;
 		default:
-			// Field as Ray is weird; treat as small sphere overlap
-			CS = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius));
+			// Fallback: sphere radius 100
+			Shape = FCollisionShape::MakeSphere(100.f);
 			break;
 	}
 
-	TArray<FHitResult> Hits;
-	const bool bAny = World->OverlapMultiByProfile(Hits, Center, Rot, Profile, CS, Params);
+	TArray<FOverlapResult> Overlaps;
+	const bool bAny = World->OverlapMultiByProfile(
+		Overlaps,
+		Center,
+		FQuat::Identity,
+		Profile,
+		Shape,
+		Params
+	);
 
-	// Current members
-	TSet<TWeakObjectPtr<AActor>> Current;
-	Current.Reserve(Hits.Num());
-	for (const FHitResult& H : Hits)
+	TSet<TWeakObjectPtr<AActor>> NewSet;
+	if (bAny)
 	{
-		if (AActor* A = H.GetActor())
+		for (const FOverlapResult& O : Overlaps)
 		{
-			Current.Add(A);
-		}
-	}
-
-	// Optional enter/exit bookkeeping (log-only for now)
-	if (Spec.Field.bEmitEnterExit)
-	{
-		for (const TWeakObjectPtr<AActor>& A : Current)
-		{
-			if (!LastMembers.Contains(A))
+			if (AActor* A = O.GetActor())
 			{
-				if (A.IsValid())
-				{
-					UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Enter: %s/%s -> %s"),
-						*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), *A->GetName());
-				}
-			}
-		}
-		for (const TWeakObjectPtr<AActor>& A : LastMembers)
-		{
-			if (!Current.Contains(A))
-			{
-				if (A.IsValid())
-				{
-					UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Exit: %s/%s -> %s"),
-						*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), *A->GetName());
-				}
+				NewSet.Add(A);
 			}
 		}
 	}
 
-	LastMembers = MoveTemp(Current);
-
-	// Debug
-	const FDeliveryDebugDrawConfigV3 DebugCfg =
-		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
-
-	if (DebugCfg.bEnable)
+	// Debug draw
+	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+	if (DebugCfg.bEnable && DebugCfg.bDrawShape)
 	{
 		const float Dur = DebugCfg.Duration;
 
-		if (DebugCfg.bDrawShape)
+		if (Spec.Shape.Kind == EDeliveryShapeV3::Sphere)
 		{
-			switch (Spec.Shape.Kind)
-			{
-				case EDeliveryShapeV3::Sphere:
-					DrawDebugSphere(World, Center, Spec.Shape.Radius, 16, FColor::Green, false, Dur, 0, 1.0f);
-					break;
-				case EDeliveryShapeV3::Capsule:
-					DrawDebugCapsule(World, Center, Spec.Shape.HalfHeight, Spec.Shape.Radius, Rot, FColor::Green, false, Dur, 0, 1.0f);
-					break;
-				case EDeliveryShapeV3::Box:
-					DrawDebugBox(World, Center, Spec.Shape.Extents, Rot, FColor::Green, false, Dur, 0, 1.0f);
-					break;
-				default:
-					break;
-			}
+			DrawDebugSphere(World, Center, Shape.GetSphereRadius(), 16, FColor::Cyan, false, Dur, 0, 1.25f);
 		}
-
-		if (DebugCfg.bDrawHits)
+		else if (Spec.Shape.Kind == EDeliveryShapeV3::Capsule)
 		{
-			for (const TWeakObjectPtr<AActor>& A : LastMembers)
-			{
-				if (A.IsValid())
-				{
-					DrawDebugPoint(World, A->GetActorLocation(), 10.f, FColor::Red, false, Dur);
-				}
-			}
+			DrawDebugCapsule(World, Center, Shape.GetCapsuleHalfHeight(), Shape.GetCapsuleRadius(), FQuat::Identity, FColor::Cyan, false, Dur, 0, 1.25f);
+		}
+		else if (Spec.Shape.Kind == EDeliveryShapeV3::Box)
+		{
+			DrawDebugBox(World, Center, Shape.GetBox(), FColor::Cyan, false, Dur, 0, 1.25f);
 		}
 	}
 
-	// Writeback to TargetStore
-	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
+	// Writeback occupants -> TargetStore
+	const FName OutSetName = ResolveOutTargetSetName(Group, LocalCtx);
 	if (OutSetName != NAME_None)
 	{
 		if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
 		{
+			TArray<AActor*> SortedActors;
+			BuildSortedActorsDeterministic(NewSet, SortedActors);
+
 			FTargetSetV3 Out;
-			for (const TWeakObjectPtr<AActor>& A : LastMembers)
+			Out.Targets.Reserve(SortedActors.Num());
+
+			for (AActor* A : SortedActors)
 			{
-				if (A.IsValid())
-				{
-					FTargetRefV3 R;
-					R.Actor = A.Get();
-					Out.AddUnique(R);
-				}
+				FTargetRefV3 R;
+				R.Actor = A;
+				Out.AddUnique(R);
 			}
+
 			Store->Set(OutSetName, Out);
 		}
 	}
 
-	return bAny;
+	// ===== Events
+	// Enter/Exit (optional)
+	if (Spec.Field.bEmitEnterExit)
+	{
+		int32 EnterCount = 0;
+		for (const TWeakObjectPtr<AActor>& W : NewSet)
+		{
+			if (!CurrentSet.Contains(W))
+			{
+				EnterCount++;
+			}
+		}
+
+		int32 ExitCount = 0;
+		for (const TWeakObjectPtr<AActor>& W : CurrentSet)
+		{
+			if (!NewSet.Contains(W))
+			{
+				ExitCount++;
+			}
+		}
+
+		if (EnterCount > 0)
+		{
+			EmitPrimitiveEnter(Ctx);
+		}
+		if (ExitCount > 0)
+		{
+			EmitPrimitiveExit(Ctx);
+		}
+	}
+
+	// Stay + Hit semantics
+	if (NewSet.Num() > 0)
+	{
+		EmitPrimitiveStay(Ctx);
+		EmitPrimitiveHit(Ctx, /*Magnitude*/ (float)NewSet.Num(), nullptr);
+	}
+
+	UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Eval: %s/%s inside=%d any=%d center=%s"),
+		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), NewSet.Num(), bAny ? 1 : 0, *Center.ToString());
+
+	CurrentSet = MoveTemp(NewSet);
 }
 
-void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason)
+void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* /*Group*/, EDeliveryStopReasonV3 Reason)
 {
 	if (!bActive)
 	{
@@ -243,11 +245,10 @@ void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGrou
 	}
 
 	bActive = false;
-	LastMembers.Reset();
+	CurrentSet.Reset();
+
+	EmitPrimitiveStopped(Ctx, Reason);
 
 	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field stopped: %s/%s inst=%d reason=%d"),
-		*GroupHandle.DeliveryId.ToString(),
-		*PrimitiveId.ToString(),
-		GroupHandle.InstanceIndex,
-		(int32)Reason);
+		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), GroupHandle.InstanceIndex, (int32)Reason);
 }

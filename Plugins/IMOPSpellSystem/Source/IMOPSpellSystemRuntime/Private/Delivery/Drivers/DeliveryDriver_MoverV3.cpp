@@ -3,6 +3,7 @@
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
 
+#include "Actions/SpellActionExecutorV3.h"
 #include "Stores/SpellTargetStoreV3.h"
 #include "Targeting/TargetingTypesV3.h"
 
@@ -43,20 +44,17 @@ FCollisionShape UDeliveryDriver_MoverV3::MakeCollisionShape(const FDeliveryShape
 {
 	switch (Shape.Kind)
 	{
-		case EDeliveryShapeV3::Sphere:  return FCollisionShape::MakeSphere(FMath::Max(0.f, Shape.Radius));
-		case EDeliveryShapeV3::Capsule: return FCollisionShape::MakeCapsule(FMath::Max(0.f, Shape.Radius), FMath::Max(0.f, Shape.HalfHeight));
-		case EDeliveryShapeV3::Box:     return FCollisionShape::MakeBox(Shape.Extents);
+		case EDeliveryShapeV3::Sphere:
+			return FCollisionShape::MakeSphere(FMath::Max(0.f, Shape.Radius));
+		case EDeliveryShapeV3::Capsule:
+			return FCollisionShape::MakeCapsule(FMath::Max(0.f, Shape.Radius), FMath::Max(0.f, Shape.HalfHeight));
+		case EDeliveryShapeV3::Box:
+			return FCollisionShape::MakeBox(Shape.Extents);
 		case EDeliveryShapeV3::Ray:
 		default:
-			// Ray => line trace (handled elsewhere); provide a tiny sphere for safety if needed
+			// Ray is handled via line trace; return tiny sphere for safety
 			return FCollisionShape::MakeSphere(0.f);
 	}
-}
-
-FQuat UDeliveryDriver_MoverV3::RotationForSweep(const FDeliveryShapeV3& Shape, const FTransform& Pose)
-{
-	// For capsule/box rotation matters; for sphere it doesn't.
-	return Pose.GetRotation();
 }
 
 bool UDeliveryDriver_MoverV3::GetHomingTargetLocation(const FSpellExecContextV3& Ctx, const FDeliveryMoverConfigV3& M, FVector& OutLoc) const
@@ -68,7 +66,14 @@ bool UDeliveryDriver_MoverV3::GetHomingTargetLocation(const FSpellExecContextV3&
 
 	if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
 	{
-		if (const FTargetSetV3* TS = Store->Get(M.HomingTargetSet))
+		// Prefer Get() if exists, else Find()/Get* depending on your store API
+		const FTargetSetV3* TS = Store->Find(M.HomingTargetSet);
+		if (!TS)
+		{
+			TS = Store->Get(M.HomingTargetSet);
+		}
+
+		if (TS)
 		{
 			for (const FTargetRefV3& R : TS->Targets)
 			{
@@ -83,48 +88,20 @@ bool UDeliveryDriver_MoverV3::GetHomingTargetLocation(const FSpellExecContextV3&
 	return false;
 }
 
-void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
-{
-	LocalCtx = PrimitiveCtx;
-
-	GroupHandle = PrimitiveCtx.GroupHandle;
-	PrimitiveId = PrimitiveCtx.PrimitiveId;
-	bActive = true;
-
-	UWorld* World = Ctx.GetWorld();
-	if (!World)
-	{
-		UE_LOG(LogIMOPDeliveryMoverV3, Error, TEXT("Mover Start failed: World null"));
-		Stop(Ctx, Group, EDeliveryStopReasonV3::Failed);
-		return;
-	}
-
-	// Initial state from pose
-	PositionWS = PrimitiveCtx.FinalPoseWS.GetLocation();
-	TraveledDistance = 0.f;
-	PierceHits = 0;
-
-	const FVector Fwd = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
-	const float Speed = FMath::Max(0.f, PrimitiveCtx.Spec.Mover.Speed);
-
-	VelocityWS = Fwd * Speed;
-
-	NextSimTimeSeconds = World->GetTimeSeconds();
-
-	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover started: %s/%s"),
-		*GroupHandle.DeliveryId.ToString(),
-		*PrimitiveId.ToString());
-}
-
 bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 	const FSpellExecContextV3& Ctx,
 	UWorld* World,
 	const FDeliveryPrimitiveSpecV3& Spec,
 	const FVector& From,
 	const FVector& To,
-	TArray<FHitResult>& OutHits) const
+	TArray<FHitResult>& OutHits
+) const
 {
 	OutHits.Reset();
+	if (!World)
+	{
+		return false;
+	}
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Mover), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)
@@ -137,24 +114,47 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 
 	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("Visibility");
 
-	// Ray = line trace, else sweep with shape (or overlap if asked)
+	// Ray or LineTrace mode => line trace
 	if (Spec.Shape.Kind == EDeliveryShapeV3::Ray || Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace)
 	{
 		return World->LineTraceMultiByProfile(OutHits, From, To, Profile, Params);
 	}
 
 	const FCollisionShape CS = MakeCollisionShape(Spec.Shape);
-	const FQuat Rot = FQuat::Identity; // for mover, using identity is OK unless you want oriented box/capsule; keep simple & stable
+	const FQuat Rot = FQuat::Identity; // keep deterministic & simple
 
+	// Overlap mode => overlap at destination
 	if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
 	{
-		return World->OverlapMultiByProfile(OutHits, To, Rot, Profile, CS, Params);
+		TArray<FOverlapResult> Overlaps;
+		const bool bAny = World->OverlapMultiByProfile(Overlaps, To, Rot, Profile, CS, Params);
+		if (bAny)
+		{
+			for (const FOverlapResult& O : Overlaps)
+			{
+				if (AActor* A = O.GetActor())
+				{
+					FHitResult H;
+					H.Actor = A;
+					H.ImpactPoint = A->GetActorLocation();
+					OutHits.Add(H);
+				}
+			}
+		}
+		return bAny;
 	}
 
 	return World->SweepMultiByProfile(OutHits, From, To, Rot, Profile, CS, Params);
 }
 
-void UDeliveryDriver_MoverV3::DebugDraw(const FSpellExecContextV3& Ctx, const UDeliveryGroupRuntimeV3* Group, const FDeliveryPrimitiveSpecV3& Spec, const FVector& From, const FVector& To, const TArray<FHitResult>& Hits) const
+void UDeliveryDriver_MoverV3::DebugDraw(
+	const FSpellExecContextV3& Ctx,
+	const UDeliveryGroupRuntimeV3* Group,
+	const FDeliveryPrimitiveSpecV3& Spec,
+	const FVector& From,
+	const FVector& To,
+	const TArray<FHitResult>& Hits
+) const
 {
 	UWorld* World = Ctx.GetWorld();
 	if (!World || !Group)
@@ -162,9 +162,7 @@ void UDeliveryDriver_MoverV3::DebugDraw(const FSpellExecContextV3& Ctx, const UD
 		return;
 	}
 
-	const FDeliveryDebugDrawConfigV3 DebugCfg =
-		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
-
+	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 	if (!DebugCfg.bEnable)
 	{
 		return;
@@ -204,7 +202,12 @@ void UDeliveryDriver_MoverV3::DebugDraw(const FSpellExecContextV3& Ctx, const UD
 	}
 }
 
-void UDeliveryDriver_MoverV3::WriteHitsToTargetStore(const FSpellExecContextV3& Ctx, const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx, const TArray<FHitResult>& Hits) const
+void UDeliveryDriver_MoverV3::WriteHitsToTargetStore(
+	const FSpellExecContextV3& Ctx,
+	const UDeliveryGroupRuntimeV3* Group,
+	const FDeliveryContextV3& PrimitiveCtx,
+	const TArray<FHitResult>& Hits
+) const
 {
 	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
 	if (OutSetName == NAME_None)
@@ -228,15 +231,47 @@ void UDeliveryDriver_MoverV3::WriteHitsToTargetStore(const FSpellExecContextV3& 
 	}
 }
 
+void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
+{
+	LocalCtx = PrimitiveCtx;
+	GroupHandle = PrimitiveCtx.GroupHandle;
+	PrimitiveId = PrimitiveCtx.PrimitiveId;
+	bActive = true;
+
+	UWorld* World = Ctx.GetWorld();
+	if (!World || !Group)
+	{
+		UE_LOG(LogIMOPDeliveryMoverV3, Error, TEXT("Mover Start failed: World/Group null"));
+		Stop(Ctx, Group, EDeliveryStopReasonV3::Failed);
+		return;
+	}
+
+	// Initialize motion state from current pose
+	PositionWS = PrimitiveCtx.FinalPoseWS.GetLocation();
+	TraveledDistance = 0.f;
+	PierceHits = 0;
+
+	const FVector Fwd = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
+	const float Speed = FMath::Max(0.f, PrimitiveCtx.Spec.Mover.Speed);
+	VelocityWS = Fwd * Speed;
+
+	NextSimTimeSeconds = World->GetTimeSeconds();
+
+	EmitPrimitiveStarted(Ctx);
+
+	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover started: %s/%s"), *GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString());
+}
+
 bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float StepSeconds)
 {
-	if (!Group)
+	if (!Group || StepSeconds <= 0.f)
 	{
 		return false;
 	}
 
-	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
-	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
+	// Use live ctx if it exists (rig may update anchor pose; motion stays ours)
+	const FDeliveryContextV3* Live = Group->PrimitiveCtxById.Find(PrimitiveId);
+	const FDeliveryContextV3& PCtx = Live ? *Live : LocalCtx;
 
 	const FDeliveryPrimitiveSpecV3& Spec = PCtx.Spec;
 	const FDeliveryMoverConfigV3& M = Spec.Mover;
@@ -248,7 +283,7 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 		return false;
 	}
 
-	// Update velocity by motion kind
+	// Update velocity based on motion kind
 	switch (M.Motion)
 	{
 		case EMoverMotionKindV3::Homing:
@@ -259,20 +294,17 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 				const FVector DesiredDir = (TargetLoc - PositionWS).GetSafeNormal();
 				const FVector CurrentDir = VelocityWS.IsNearlyZero() ? DesiredDir : VelocityWS.GetSafeNormal();
 
-				// Simple deterministic blend
 				const float Strength = FMath::Clamp(M.HomingStrength, 0.f, 1000.f);
 				const float Alpha = FMath::Clamp(Strength * StepSeconds, 0.f, 1.f);
 
 				const FVector NewDir = FMath::Lerp(CurrentDir, DesiredDir, Alpha).GetSafeNormal();
 				VelocityWS = NewDir * FMath::Max(0.f, M.Speed);
 			}
-			// else keep current velocity
 			break;
 		}
 
 		case EMoverMotionKindV3::Ballistic:
 		{
-			// Apply gravity on Z
 			const float G = -980.f * FMath::Max(0.f, M.GravityScale);
 			VelocityWS.Z += G * StepSeconds;
 			break;
@@ -280,14 +312,13 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 
 		case EMoverMotionKindV3::Straight:
 		default:
-			// Keep constant velocity
+			// keep constant velocity
 			break;
 	}
 
 	const FVector From = PositionWS;
 	const FVector To = PositionWS + VelocityWS * StepSeconds;
 
-	// Sweep
 	TArray<FHitResult> Hits;
 	const bool bAny = SweepMoveAndCollectHits(Ctx, Ctx.GetWorld(), Spec, From, To, Hits);
 
@@ -297,26 +328,24 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 		WriteHitsToTargetStore(Ctx, Group, PCtx, Hits);
 		DebugDraw(Ctx, Group, Spec, From, To, Hits);
 
-		// Hit handling
+		EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr);
+
 		if (M.bPierce)
 		{
 			PierceHits += Hits.Num();
-
 			const int32 MaxPierce = M.MaxPierceHits;
 			if (MaxPierce > 0 && PierceHits >= MaxPierce)
 			{
-				// stop at first blocking hit point for determinism
 				PositionWS = Hits[0].ImpactPoint;
 				Stop(Ctx, Group, EDeliveryStopReasonV3::OnFirstHit);
 				return false;
 			}
 
-			// Continue moving through (no penetration resolution yet)
+			// continue through (no penetration resolution yet)
 			PositionWS = To;
 		}
 		else
 		{
-			// Stop or continue depending on config
 			if (M.bStopOnHit)
 			{
 				PositionWS = Hits[0].ImpactPoint;
@@ -335,8 +364,8 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 
 	TraveledDistance += FVector::Distance(From, PositionWS);
 
-	// Update group primitive ctx FinalPoseWS so other systems can read it
-	if (LiveCtx)
+	// Write live pose back into group ctx (so other systems can read)
+	if (Live)
 	{
 		FDeliveryContextV3& Mut = Group->PrimitiveCtxById.FindChecked(PrimitiveId);
 		Mut.FinalPoseWS = FTransform(Mut.FinalPoseWS.GetRotation(), PositionWS, Mut.FinalPoseWS.GetScale3D());
@@ -358,8 +387,10 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGrou
 		return;
 	}
 
-	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
-	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
+	EmitPrimitiveTick(Ctx, DeltaSeconds);
+
+	const FDeliveryContextV3* Live = Group->PrimitiveCtxById.Find(PrimitiveId);
+	const FDeliveryContextV3& PCtx = Live ? *Live : LocalCtx;
 
 	const float Now = World->GetTimeSeconds();
 	const float Interval = FMath::Max(0.f, PCtx.Spec.Mover.TickInterval);
@@ -370,12 +401,12 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGrou
 		{
 			return;
 		}
+
 		NextSimTimeSeconds = Now + Interval;
 		StepSim(Ctx, Group, Interval);
 	}
 	else
 	{
-		// every tick with DeltaSeconds
 		StepSim(Ctx, Group, FMath::Max(0.f, DeltaSeconds));
 	}
 }
@@ -388,6 +419,8 @@ void UDeliveryDriver_MoverV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGrou
 	}
 
 	bActive = false;
+
+	EmitPrimitiveStopped(Ctx, Reason);
 
 	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover stopped: %s/%s inst=%d reason=%d traveled=%.1f pierce=%d"),
 		*GroupHandle.DeliveryId.ToString(),

@@ -2,17 +2,20 @@
 
 #include "CoreMinimal.h"
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
+
 #include "DeliveryDriver_BeamV3.generated.h"
 
+class UDeliveryGroupRuntimeV3;
+
 /**
- * Beam driver (Composite-first):
- * - Each tick (or interval) traces forward from PrimitiveCtx.FinalPoseWS.
- * - Optionally uses a sweep radius (Beam.Radius > 0).
- * - Optionally locks onto a target set (Beam.bLockOnTarget + LockTargetSet).
- * - Writes hit targets to TargetStore (OutTargetSetName / group default).
- * - DrawDebug line + hits.
- *
- * Networking: server authoritative; deterministic sorting.
+ * Beam driver (Composite-first)
+ * - Ticks at Spec.Beam.TickInterval (0 => every tick)
+ * - Origin/Dir comes from PrimitiveCtx.FinalPoseWS (already includes AnchorRef)
+ * - Optional LockOn: aim towards best target from LockTargetSet
+ * - Performs LineTraceMulti (Radius==0) or SphereSweepMulti (Radius>0)
+ * - Tracks InsideSet for Enter/Exit/Stay
+ * - Writes hit actors into TargetStore (Primitive OutTargetSetName or Group default)
+ * - Emits Primitive events: Started/Stopped/Tick/Enter/Exit/Stay/Hit
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_BeamV3 : public UDeliveryDriverBaseV3
@@ -29,12 +32,17 @@ private:
 	FDeliveryContextV3 LocalCtx;
 
 	UPROPERTY()
-	float NextEvalTimeSeconds = 0.f;
+	float TimeSinceLastEval = 0.f;
+
+	// Persistent set for Enter/Exit/Stay semantics
+	TSet<TWeakObjectPtr<AActor>> InsideSet;
 
 private:
 	static FName ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
-	static void SortHitsDeterministic(TArray<FHitResult>& Hits, const FVector& From);
 
-	bool EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
-	bool ComputeBeamEndpoints(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx, FVector& OutFrom, FVector& OutTo) const;
+	static void SortActorsDeterministic(TArray<AActor*>& Actors);
+
+	static AActor* PickLockTargetDeterministic(const FSpellExecContextV3& Ctx, FName TargetSetName);
+
+	void EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group);
 };

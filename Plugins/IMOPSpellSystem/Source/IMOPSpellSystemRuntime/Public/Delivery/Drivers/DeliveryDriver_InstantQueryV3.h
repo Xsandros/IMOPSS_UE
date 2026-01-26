@@ -2,15 +2,16 @@
 
 #include "CoreMinimal.h"
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
+
 #include "DeliveryDriver_InstantQueryV3.generated.h"
 
 /**
  * InstantQuery driver (Composite-first):
- * - Evaluates once on Start (no Tick).
- * - Uses PrimitiveCtx.FinalPoseWS as origin+forward.
- * - Ray => line trace; other shapes => sweep (or overlap if Spec.Query.Mode==Overlap).
- * - Writes hit actors into TargetStore (PrimitiveCtx.Spec.OutTargetSetName or Group default).
- * - DebugDraw uses Group defaults unless primitive override enabled.
+ * - Evaluates once on Start (no Tick needed).
+ * - Ray shape semantics (line trace) by default; if shape is Sphere/Box/Capsule we do sweep.
+ * - Writes hits to TargetStore if OutTargetSetName is set (or group default).
+ * - Emits Spell.Event.Delivery.Hit if any hit is found (Phase 4 event hook).
+ * - Debug draw for path + hits.
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_InstantQueryV3 : public UDeliveryDriverBaseV3

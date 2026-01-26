@@ -9,6 +9,7 @@
 #include "Delivery/Drivers/DeliveryDriver_MoverV3.h"
 #include "Delivery/Drivers/DeliveryDriver_BeamV3.h"
 
+#include "Core/SpellGameplayTagsV3.h"
 #include "Events/SpellEventBusSubsystemV3.h"
 
 #include "Engine/World.h"
@@ -23,6 +24,36 @@ static uint32 HashCombineFast32(uint32 A, uint32 B)
 static uint32 HashName32(FName N)
 {
 	return ::GetTypeHash(N);
+}
+
+static USpellEventBusSubsystemV3* ResolveBus(const FSpellExecContextV3& Ctx)
+{
+	if (Ctx.EventBus)
+	{
+		return Ctx.EventBus.Get();
+	}
+	if (UWorld* W = Ctx.GetWorld())
+	{
+		return W->GetSubsystem<USpellEventBusSubsystemV3>();
+	}
+	return nullptr;
+}
+
+static void EmitDeliveryEvent(const FSpellExecContextV3& Ctx, const FGameplayTag& Tag, float Magnitude = 0.f)
+{
+	USpellEventBusSubsystemV3* Bus = ResolveBus(Ctx);
+	if (!Bus || !Tag.IsValid())
+	{
+		return;
+	}
+
+	FSpellEventV3 Ev;
+	Ev.RuntimeGuid = Ctx.RuntimeGuid;
+	Ev.EventTag = Tag;
+	Ev.Instigator = Ctx.Caster;
+	Ev.Magnitude = Magnitude;
+
+	Bus->Emit(Ev);
 }
 
 void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)
@@ -138,7 +169,6 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	}
 
 	const float Now = GetWorld()->GetTimeSeconds();
-
 	const int32 InstanceIndex = AllocateInstanceIndex(Ctx.RuntimeGuid, Spec.DeliveryId);
 
 	FDeliveryHandleV3 Handle;
@@ -160,6 +190,16 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	EvaluateRigIfNeeded(Group, Now);
 	LastRigEvalTimeByHandle.Add(Handle, Now);
 
+	ActiveGroups.Add(Handle, Group);
+	OutHandle = Handle;
+
+	// ===== Emit: Group Started
+	{
+		const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+		EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Started, /*Magnitude=*/(float)InstanceIndex);
+	}
+
+	// ===== Spawn primitives
 	for (int32 i = 0; i < Spec.Primitives.Num(); ++i)
 	{
 		const FDeliveryPrimitiveSpecV3& PSpec = Spec.Primitives[i];
@@ -200,11 +240,17 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Group->PrimitiveCtxById.Add(PSpec.PrimitiveId, PCtx);
 		Group->DriversByPrimitiveId.Add(PSpec.PrimitiveId, Driver);
 
-		Driver->Start(Ctx, Group, PCtx);
-	}
+		// Emit primitive started BEFORE driver start (so listeners can prepare)
+		Driver->EmitPrimitiveStarted(Ctx);
 
-	ActiveGroups.Add(Handle, Group);
-	OutHandle = Handle;
+		Driver->Start(Ctx, Group, PCtx);
+
+		// Also emit legacy-per-primitive started tag (if you want both levels, keep)
+		{
+			const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+			EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Primitive_Started, /*Magnitude=*/(float)i);
+		}
+	}
 
 	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StartDelivery: Group %s #%d spawned with %d primitives"),
 		*Spec.DeliveryId.ToString(), InstanceIndex, Spec.Primitives.Num());
@@ -352,7 +398,7 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 
 	Group->RigCache.RootWS = Eval.RootWorld;
 	Group->RigCache.EmittersWS = Eval.EmittersWorld;
-	Group->RigCache.EmitterNames = Eval.EmitterNames; // ✅ FIX (was missing in repo)
+	Group->RigCache.EmitterNames = Eval.EmitterNames;
 
 	LastRigEvalTimeByHandle.Add(Group->GroupHandle, NowSeconds);
 
@@ -364,7 +410,7 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 	}
 }
 
-FTransform UDeliverySubsystemV3::ResolveAnchorPoseWS(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) const
+FTransform UDeliverySubsystemV3::ResolveAnchorPoseWS(const FSpellExecContextV3& /*Ctx*/, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) const
 {
 	if (!Group)
 	{
@@ -434,6 +480,9 @@ bool UDeliverySubsystemV3::StopPrimitiveInGroup(const FSpellExecContextV3& Ctx, 
 	Driver->Stop(Ctx, Group, Reason);
 	Driver->bActive = false;
 
+	// Emit primitive stopped
+	Driver->EmitPrimitiveStopped(Ctx, Reason);
+
 	Group->DriversByPrimitiveId.Remove(PrimitiveId);
 	Group->PrimitiveCtxById.Remove(PrimitiveId);
 
@@ -448,6 +497,7 @@ bool UDeliverySubsystemV3::StopGroupInternal(const FSpellExecContextV3& Ctx, con
 		return false;
 	}
 
+	// Stop primitives
 	for (auto& Pair : Group->DriversByPrimitiveId)
 	{
 		if (UDeliveryDriverBaseV3* Driver = Pair.Value)
@@ -456,6 +506,8 @@ bool UDeliverySubsystemV3::StopGroupInternal(const FSpellExecContextV3& Ctx, con
 			{
 				Driver->Stop(Ctx, Group, Reason);
 				Driver->bActive = false;
+
+				Driver->EmitPrimitiveStopped(Ctx, Reason);
 			}
 		}
 	}
@@ -465,6 +517,12 @@ bool UDeliverySubsystemV3::StopGroupInternal(const FSpellExecContextV3& Ctx, con
 
 	ActiveGroups.Remove(Handle);
 	LastRigEvalTimeByHandle.Remove(Handle);
+
+	// Emit group stopped
+	{
+		const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+		EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stopped, /*Magnitude=*/(float)(int32)Reason);
+	}
 
 	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StopDelivery: Group %s #%d stopped (Reason=%d)"),
 		*Handle.DeliveryId.ToString(), Handle.InstanceIndex, (int32)Reason);

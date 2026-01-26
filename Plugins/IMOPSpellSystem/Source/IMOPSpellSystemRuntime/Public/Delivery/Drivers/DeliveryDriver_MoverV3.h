@@ -4,42 +4,54 @@
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
 #include "DeliveryDriver_MoverV3.generated.h"
 
+/**
+ * Mover driver (Composite-first):
+ * - Simulates a projectile-like mover deterministically on the server (and in replays).
+ * - Uses PrimitiveCtx.FinalPoseWS as spawn pose, then integrates forward.
+ * - Optional: homing uses TargetStore (HomingTargetSet) to pick first target.
+ * - Optional: sweep hit test along segment each tick/interval.
+ * - Debug draw for path + hits.
+ *
+ * NOTE: For now, we keep mover state inside the driver (not in blackboard).
+ *       In later phases, you can migrate state to group blackboard for replication snapshots.
+ */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_MoverV3 : public UDeliveryDriverBaseV3
 {
 	GENERATED_BODY()
 
 public:
-	virtual void Start(const FSpellExecContextV3& Ctx, const FDeliveryContextV3& InDeliveryCtx) override;
-	virtual void Tick(const FSpellExecContextV3& Ctx, float DeltaSeconds) override;
-	virtual void Stop(const FSpellExecContextV3& Ctx, EDeliveryStopReasonV3 Reason) override;
-
-	virtual FDeliveryHandleV3 GetHandle() const override { return DeliveryCtx.Handle; }
-	virtual bool IsActive() const override { return bActive; }
+	virtual void Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) override;
+	virtual void Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds) override;
+	virtual void Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason) override;
 
 private:
-	FDeliveryContextV3 DeliveryCtx;
-	bool bActive = false;
+	UPROPERTY()
+	FDeliveryContextV3 LocalCtx;
 
-	FVector Position = FVector::ZeroVector;
-	FVector Velocity = FVector::ZeroVector;
+	// Current mover state
+	UPROPERTY()
+	FVector PosWS = FVector::ZeroVector;
 
+	UPROPERTY()
+	FVector VelWS = FVector::ZeroVector;
+
+	UPROPERTY()
 	float DistanceTraveled = 0.f;
-	float TimeSinceStart = 0.f;
-	float TimeSinceLastEval = 0.f;
 
-	int32 PierceHitsSoFar = 0;
-	TSet<TWeakObjectPtr<AActor>> UniqueHitTargets;
+	UPROPERTY()
+	float NextSimTimeSeconds = 0.f;
 
-	// helpers
-	FTransform ResolveAttachTransform(const FSpellExecContextV3& Ctx) const;
+	UPROPERTY()
+	int32 PierceCount = 0;
 
-	// motion
-	void IntegrateMotion(const FSpellExecContextV3& Ctx, float Dt);
+private:
+	static FName ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
 
-	// collision
-	void EvaluateSweep(const FSpellExecContextV3& Ctx, const FVector& From, const FVector& To);
+	bool TryResolveHomingTargetLocation(const FSpellExecContextV3& Ctx, const struct FDeliveryMoverConfigV3& MoverCfg, FVector& OutTargetLoc) const;
 
-	// homing
-	AActor* ChooseHomingTargetDeterministic(const FSpellExecContextV3& Ctx) const;
+	bool StepSim(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float StepDt);
+	bool DoSweepHit(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FVector& From, const FVector& To, TArray<FHitResult>& OutHits) const;
+
+	void DebugDrawStep(UWorld* World, const struct FDeliveryDebugDrawConfigV3& DebugCfg, const FVector& From, const FVector& To) const;
 };

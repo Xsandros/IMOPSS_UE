@@ -4,30 +4,41 @@
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
 #include "DeliveryDriver_FieldV3.generated.h"
 
+/**
+ * Field driver (Composite-first):
+ * - Periodically evaluates an overlap (recommended) at PrimitiveCtx.FinalPoseWS.
+ * - Maintains a small membership cache (enter/exit) for future event emission.
+ * - DrawDebug only for now.
+ * - Optional: writes current membership into TargetStore (OutTargetSetName / group default).
+ *
+ * NOTE: Stop is explicit (or via subsystem Stop calls). StopPolicy enforcement will come later at group level.
+ */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_FieldV3 : public UDeliveryDriverBaseV3
 {
 	GENERATED_BODY()
 
 public:
-	virtual void Start(const FSpellExecContextV3& Ctx, const FDeliveryContextV3& InDeliveryCtx) override;
-	virtual void Tick(const FSpellExecContextV3& Ctx, float DeltaSeconds) override;
-	virtual void Stop(const FSpellExecContextV3& Ctx, EDeliveryStopReasonV3 Reason) override;
-
-	virtual FDeliveryHandleV3 GetHandle() const override { return DeliveryCtx.Handle; }
-	virtual bool IsActive() const override { return bActive; }
+	virtual void Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) override;
+	virtual void Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds) override;
+	virtual void Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason) override;
 
 private:
-	// ==== Runtime State ====
-	FDeliveryContextV3 DeliveryCtx;
-	bool bActive = false;
+	UPROPERTY()
+	FDeliveryContextV3 LocalCtx;
 
-	float TimeSinceLastEval = 0.f;
+	UPROPERTY()
+	float NextEvalTimeSeconds = 0.f;
 
-	// current occupants
-	TSet<TWeakObjectPtr<AActor>> CurrentSet;
+	// Membership cache (deterministic-ish: server authoritative; stable for game logic)
+	UPROPERTY()
+	TSet<TWeakObjectPtr<AActor>> CurrentMembers;
 
-	// helpers
-	FTransform ResolveAttachTransform(const FSpellExecContextV3& Ctx) const;
-	void Evaluate(const FSpellExecContextV3& Ctx);
+private:
+	static FName ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
+	static void SortActorsDeterministic(TArray<AActor*>& Actors);
+
+	bool EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
+
+	bool DoOverlap(UWorld* World, const FVector& Origin, const FQuat& Rot, const struct FDeliveryShapeV3& Shape, FName Profile, const FCollisionQueryParams& Params, TArray<FHitResult>& OutHits) const;
 };

@@ -5,48 +5,46 @@
 #include "Delivery/DeliverySpecV3.h"
 #include "DeliveryContextV3.generated.h"
 
+// Runtime context for ONE primitive inside a composite group.
 USTRUCT(BlueprintType)
 struct FDeliveryContextV3
 {
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FDeliveryHandleV3 Handle;
+	FDeliveryHandleV3 GroupHandle;
 
-	// Identifies which sub-primitive / rig emitter this delivery instance represents.
-	// Stable per spawned instance, used for logs and propagated into delivery events.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FName PrimitiveId = "P0";
 
-	// When spawned from a rig multi-emitter evaluation, this indicates which emitter index this instance uses.
-	// -1 means "root" / not emitter-driven.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	int32 PrimitiveIndex = 0;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	int32 EmitterIndex = -1;
-	
-	// Which rig slot override produced this primitive (useful for authoring & filtering).
-	// 0 = default slot.
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	int32 SpawnSlot = 0;
 
-	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FDeliverySpecV3 Spec;
+	float StartTimeSeconds = 0.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	TWeakObjectPtr<AActor> Caster;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	float StartTime = 0.f;
-	
-	// Cached pose derived from Rig/Attach according to PoseUpdatePolicy
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FTransform CachedPose = FTransform::Identity;
-
-	// Pose update accumulator (for Interval policy)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	float PoseAccum = 0.f;
-
-	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	int32 Seed = 0;
+
+	// Snapshot of spec data for this primitive
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FDeliveryPrimitiveSpecV3 Spec;
+
+	// Cached anchor pose for this primitive (updated by group rig policy)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FTransform AnchorPoseWS = FTransform::Identity;
+
+	// Cached final pose (Anchor + local offsets + motion), if you want it.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FTransform FinalPoseWS = FTransform::Identity;
+
+	// Runtime-resolved references (optional)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	TWeakObjectPtr<AActor> Caster;
 };

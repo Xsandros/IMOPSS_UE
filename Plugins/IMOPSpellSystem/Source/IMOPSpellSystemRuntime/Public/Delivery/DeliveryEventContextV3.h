@@ -2,76 +2,52 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "Engine/HitResult.h"
+
 #include "Delivery/DeliveryTypesV3.h"
+
 #include "DeliveryEventContextV3.generated.h"
 
-UENUM(BlueprintType)
-enum class EDeliveryEventTypeV3 : uint8
-{
-	Started,
-	Stopped,
-	Hit,
-	Enter,
-	Stay,
-	Exit,
-	Tick
-};
-
-USTRUCT(BlueprintType)
-struct FDeliveryHitV3
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	TWeakObjectPtr<AActor> Target;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FVector Location = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FVector Normal = FVector::ZeroVector;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FGameplayTag HitZoneTag;
-};
-
+/**
+ * Payload for delivery-related events (Phase 4+).
+ * We keep it flexible and purely data-driven so later phases (Presentation/Net/Trace)
+ * can reuse it without rewrites.
+ */
 USTRUCT(BlueprintType)
 struct FDeliveryEventContextV3
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	EDeliveryEventTypeV3 Type = EDeliveryEventTypeV3::Hit;
+	// Which group/primitive produced this event
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
+	FDeliveryHandleV3 GroupHandle;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FDeliveryHandleV3 Handle = {};
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
+	FName PrimitiveId = NAME_None;
 
-	// Identifies which sub-primitive/node produced this event.
-	// For single-primitive deliveries, use a stable default like "P0".
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	FName PrimitiveId = "P0";
-
-	// Emitter index that produced this event (-1 for root/single primitive).
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	int32 EmitterIndex = -1;
-
-	// Rig slot used for this primitive (0=default). Useful for per-slot authoring.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	int32 SpawnSlot = 0;
-
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	EDeliveryStopReasonV3 StopReminder = EDeliveryStopReasonV3::Manual;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	// Optional semantic tags for the event (in addition to the SpellEvent tag)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
 	FGameplayTagContainer DeliveryTags;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
 	FGameplayTagContainer HitTags;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	TWeakObjectPtr<AActor> Caster;
+	// Common payload fields
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
+	FVector OriginWS = FVector::ZeroVector;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
-	TArray<FDeliveryHitV3> Hits;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
+	FVector DirectionWS = FVector::ForwardVector;
+
+	// For hit/trace events
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
+	TArray<FHitResult> Hits;
+
+	// Convenience: first hit actor list (optional)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
+	TArray<TWeakObjectPtr<AActor>> HitActors;
+
+	// Optional: where hits were written (if any)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
+	FName OutTargetSetName = NAME_None;
 };

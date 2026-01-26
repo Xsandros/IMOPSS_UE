@@ -1,8 +1,11 @@
 #include "Delivery/Exec_StartDeliveryV3.h"
+
 #include "Delivery/DeliverySubsystemV3.h"
+#include "Delivery/SpellPayloadsDeliveryV3.h"
+
+#include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPExecStartDeliveryV3, Log, All);
-
 
 void UExec_StartDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* PayloadData)
 {
@@ -30,9 +33,11 @@ void UExec_StartDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* 
 	FDeliveryHandleV3 Handle;
 	if (!Subsys->StartDelivery(Ctx, P->Spec, Handle))
 	{
-		UE_LOG(LogIMOPExecStartDeliveryV3, Warning, TEXT("Exec_StartDelivery: StartDelivery failed (Id=%s)"), *P->Spec.DeliveryId.ToString());
+		UE_LOG(LogIMOPExecStartDeliveryV3, Warning, TEXT("Exec_StartDelivery: StartDelivery failed (Id=%s)"),
+			*P->Spec.DeliveryId.ToString());
 		return;
 	}
 
-	UE_LOG(LogIMOPExecStartDeliveryV3, Log, TEXT("Exec_StartDelivery: started Id=%s Inst=%d"), *Handle.DeliveryId.ToString(), Handle.InstanceIndex);
+	UE_LOG(LogIMOPExecStartDeliveryV3, Log, TEXT("Exec_StartDelivery: started Id=%s Inst=%d"),
+		*Handle.DeliveryId.ToString(), Handle.InstanceIndex);
 }

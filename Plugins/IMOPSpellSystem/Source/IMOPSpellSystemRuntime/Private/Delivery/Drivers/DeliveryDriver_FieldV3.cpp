@@ -1,382 +1,273 @@
 #include "Delivery/Drivers/DeliveryDriver_FieldV3.h"
 
-#include "Actions/SpellActionExecutorV3.h"
-#include "Delivery/DeliverySubsystemV3.h"
-#include "Delivery/DeliveryEventContextV3.h"
-#include "Core/SpellGameplayTagsV3.h"
-#include "Engine/OverlapResult.h"
-#include "DrawDebugHelpers.h"
-#include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
+#include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
+#include "Delivery/DeliverySpecV3.h"
 
-#include "Engine/World.h"
+#include "Actions/SpellActionExecutorV3.h" // FSpellExecContextV3::GetWorld / GetCaster
 #include "Stores/SpellTargetStoreV3.h"
 #include "Targeting/TargetingTypesV3.h"
 
+#include "DrawDebugHelpers.h"
+#include "Engine/World.h"
+#include "CollisionShape.h"
+
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPDeliveryFieldV3, Log, All);
 
-static void BuildSortedActorsDeterministic(const TSet<TWeakObjectPtr<AActor>>& InSet, TArray<AActor*>& OutActors)
+static FCollisionShape MakeCollisionShape_Field(const FDeliveryShapeV3& Shape)
 {
-	OutActors.Reset();
-	for (const TWeakObjectPtr<AActor>& W : InSet)
+	switch (Shape.Kind)
 	{
-		if (AActor* A = W.Get())
-		{
-			OutActors.Add(A);
-		}
+		case EDeliveryShapeV3::Sphere:
+			return FCollisionShape::MakeSphere(FMath::Max(0.f, Shape.Radius));
+		case EDeliveryShapeV3::Capsule:
+			return FCollisionShape::MakeCapsule(FMath::Max(0.f, Shape.Radius), FMath::Max(0.f, Shape.HalfHeight));
+		case EDeliveryShapeV3::Box:
+			return FCollisionShape::MakeBox(Shape.Extents);
+		case EDeliveryShapeV3::Ray:
+		default:
+			// Ray is not meaningful as a field volume; use tiny sphere.
+			return FCollisionShape::MakeSphere(1.f);
 	}
+}
 
-	OutActors.Sort([](const AActor& A, const AActor& B)
+FName UDeliveryDriver_FieldV3::ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
+{
+	if (PrimitiveCtx.Spec.OutTargetSetName != NAME_None)
 	{
-		return A.GetUniqueID() < B.GetUniqueID();
+		return PrimitiveCtx.Spec.OutTargetSetName;
+	}
+	if (Group && Group->GroupSpec.OutTargetSetDefault != NAME_None)
+	{
+		return Group->GroupSpec.OutTargetSetDefault;
+	}
+	return NAME_None;
+}
+
+void UDeliveryDriver_FieldV3::SortActorsDeterministic(TArray<AActor*>& Actors)
+{
+	Actors.Sort([](const AActor& A, const AActor& B)
+	{
+		return A.GetFName().LexicalLess(B.GetFName());
 	});
 }
 
-
-FTransform UDeliveryDriver_FieldV3::ResolveAttachTransform(const FSpellExecContextV3& Ctx) const
+bool UDeliveryDriver_FieldV3::DoOverlap(
+	UWorld* World,
+	const FVector& Origin,
+	const FQuat& Rot,
+	const FDeliveryShapeV3& Shape,
+	FName Profile,
+	const FCollisionQueryParams& Params,
+	TArray<FHitResult>& OutHits) const
 {
-	const FDeliveryAttachV3& A = DeliveryCtx.Spec.Attach;
-
-	switch (A.Kind)
+	if (!World)
 	{
-	case EDeliveryAttachKindV3::World:
-		return A.WorldTransform;
-
-	case EDeliveryAttachKindV3::Caster:
-		return Ctx.Caster ? Ctx.Caster->GetActorTransform() : FTransform::Identity;
-
-	case EDeliveryAttachKindV3::TargetSet:
-	{
-		if (Ctx.TargetStore && A.TargetSetName != NAME_None)
-		{
-			if (const FTargetSetV3* Set = Ctx.TargetStore->Find(A.TargetSetName))
-			{
-				FVector Sum = FVector::ZeroVector;
-				int32 Count = 0;
-
-				for (const FTargetRefV3& Ref : Set->Targets)
-				{
-					if (AActor* T = Ref.Actor.Get())
-					{
-						Sum += T->GetActorLocation();
-						Count++;
-					}
-				}
-
-				if (Count > 0)
-				{
-					FTransform Xf;
-					Xf.SetLocation(Sum / (float)Count);
-					return Xf;
-				}
-			}
-		}
-		UE_LOG(LogIMOPDeliveryFieldV3, Warning,
-			TEXT("Field ResolveAttachTransform: TargetSetCenter invalid (%s), fallback caster"),
-			*A.TargetSetName.ToString());
-
-		return Ctx.Caster ? Ctx.Caster->GetActorTransform() : FTransform::Identity;
+		return false;
 	}
 
-	default:
-		return Ctx.Caster ? Ctx.Caster->GetActorTransform() : FTransform::Identity;
-	}
+	const FCollisionShape CS = MakeCollisionShape_Field(Shape);
+	return World->OverlapMultiByProfile(OutHits, Origin, Rot, Profile, CS, Params);
 }
 
-void UDeliveryDriver_FieldV3::Start(const FSpellExecContextV3& Ctx, const FDeliveryContextV3& InDeliveryCtx)
+void UDeliveryDriver_FieldV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
 {
-	DeliveryCtx = InDeliveryCtx;
+	LocalCtx = PrimitiveCtx;
+
+	GroupHandle = PrimitiveCtx.GroupHandle;
+	PrimitiveId = PrimitiveCtx.PrimitiveId;
 	bActive = true;
-	TimeSinceLastEval = 0.f;
-	CurrentSet.Reset();
 
-	UDeliverySubsystemV3* Subsys = Ctx.GetWorld()->GetSubsystem<UDeliverySubsystemV3>();
-	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
+	UWorld* World = Ctx.GetWorld();
+	if (!World)
+	{
+		UE_LOG(LogIMOPDeliveryFieldV3, Error, TEXT("Field Start failed: World is null"));
+		Stop(Ctx, Group, EDeliveryStopReasonV3::Failed);
+		return;
+	}
 
-	
-	// Emit Started
-	FDeliveryEventContextV3 Ev;
-	Ev.Type = EDeliveryEventTypeV3::Started;
-	Ev.Handle = DeliveryCtx.Handle;
-	Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
-	Ev.HitTags = DeliveryCtx.Spec.HitTags;
-	Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Started);
-	Ev.Caster = Ctx.Caster;
+	// Schedule first eval immediately
+	NextEvalTimeSeconds = World->GetTimeSeconds();
 
-	Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Started, Ev);
+	// Optional: one immediate eval on start (feels good for responsiveness)
+	EvaluateOnce(Ctx, Group, PrimitiveCtx);
+
+	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field started: %s/%s"),
+		*GroupHandle.DeliveryId.ToString(),
+		*PrimitiveId.ToString());
 }
 
-void UDeliveryDriver_FieldV3::Tick(const FSpellExecContextV3& Ctx, float DeltaSeconds)
+void UDeliveryDriver_FieldV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds)
 {
 	if (!bActive)
 	{
 		return;
 	}
 
-	TimeSinceLastEval += DeltaSeconds;
-
-	const float Interval = FMath::Max(0.01f, DeliveryCtx.Spec.Field.TickInterval);
-	if (TimeSinceLastEval < Interval)
+	UWorld* World = Ctx.GetWorld();
+	if (!World || !Group)
 	{
 		return;
 	}
 
-	TimeSinceLastEval = 0.f;
-	Evaluate(Ctx);
+	// Fetch latest primitive ctx from group (so moving rig updates are used)
+	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
+	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
+
+	const float Now = World->GetTimeSeconds();
+	const float Interval = FMath::Max(0.f, PCtx.Spec.Field.TickInterval);
+
+	// Interval==0 => every tick
+	if (Interval > 0.f && Now < NextEvalTimeSeconds)
+	{
+		return;
+	}
+
+	// Advance schedule (stable)
+	NextEvalTimeSeconds = (Interval > 0.f) ? (Now + Interval) : Now;
+
+	EvaluateOnce(Ctx, Group, PCtx);
 }
 
-void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx)
+bool UDeliveryDriver_FieldV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
 {
 	UWorld* World = Ctx.GetWorld();
-	if (!World)
+	if (!World || !Group)
 	{
-		return;
+		return false;
 	}
-	const float MaxDur = DeliveryCtx.Spec.StopPolicy.MaxDuration;
-	if (MaxDur > 0.f)
+
+	const FDeliveryPrimitiveSpecV3& Spec = PrimitiveCtx.Spec;
+
+	// We treat Field as an overlap volume. If author set Sweep/LineTrace, we still overlap for now.
+	if (Spec.Query.Mode != EDeliveryQueryModeV3::Overlap)
 	{
-		const float Now = World->GetTimeSeconds(); 
-		const float Elapsed = Now - DeliveryCtx.StartTime; 
-		if (Elapsed >= MaxDur)
+		UE_LOG(LogIMOPDeliveryFieldV3, Warning, TEXT("Field %s/%s: Query.Mode != Overlap; forcing Overlap for Field."),
+			*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString());
+	}
+
+	const FVector Origin = PrimitiveCtx.FinalPoseWS.GetLocation();
+	const FQuat Rot = PrimitiveCtx.FinalPoseWS.GetRotation();
+
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), /*bTraceComplex*/ false);
+	if (Spec.Query.bIgnoreCaster)
+	{
+		if (AActor* Caster = Ctx.GetCaster())
 		{
-			UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field AutoStop: Id=%s Inst=%d MaxDur=%.3f Elapsed=%.3f"), 
-				*DeliveryCtx.Handle.DeliveryId.ToString(), DeliveryCtx.Handle.InstanceIndex, MaxDur, Elapsed);
-			Stop(Ctx, EDeliveryStopReasonV3::DurationElapsed); 
-			return;
-		}
-	} 
-	FTransform Xf = ResolveAttachTransform(Ctx);
-	FVector Center = Xf.GetLocation();
-	FDeliveryRigEvalResultV3 RigOut;
-	if (!DeliveryCtx.Spec.Rig.IsEmpty())
-	{
-		FDeliveryRigEvaluatorV3::Evaluate(Ctx, DeliveryCtx, DeliveryCtx.Spec.Rig, RigOut);
-
-		// Per-emitter center if spawned via multi-emitter
-		const FDeliveryRigPoseV3& P = FDeliveryRigPoseSelectorV3::SelectPose(RigOut, DeliveryCtx.EmitterIndex);
-		Center = P.Location;
-	}
-	else
-	{
-		const FTransform Xf2 = ResolveAttachTransform(Ctx);
-		Center = Xf2.GetLocation();
-	}
-
-	float Radius = DeliveryCtx.Spec.Shape.Radius;
-
-	if (Radius <= 0.f)
-	{
-		UE_LOG(LogIMOPDeliveryFieldV3, Warning,
-			TEXT("Field Start: Radius <= 0 (%.2f) for Id=%s Inst=%d. Using fallback Radius=100."),
-			Radius,
-			*DeliveryCtx.Handle.DeliveryId.ToString(),
-			DeliveryCtx.Handle.InstanceIndex);
-
-		Radius = 100.f;
-	}
-
-
-	if (DeliveryCtx.Spec.DebugDraw.bEnable && DeliveryCtx.Spec.DebugDraw.bDrawShape)
-	{
-		// Field currently uses sphere overlap; draw sphere for visibility
-		DrawDebugSphere(World, Center, Radius, 16, FColor::Cyan, false, DeliveryCtx.Spec.DebugDraw.Duration, 0, 1.25f);
-	}
-	
-	if (MaxDur > 0.f)
-	{
-		const float Now = Ctx.GetWorld() ? Ctx.GetWorld()->GetTimeSeconds() : DeliveryCtx.StartTime;
-		const float Elapsed = Now - DeliveryCtx.StartTime;
-
-		if (Elapsed >= MaxDur)
-		{
-			UE_LOG(LogIMOPDeliveryFieldV3, Log,
-				TEXT("Field AutoStop: Id=%s Inst=%d MaxDur=%.3f Elapsed=%.3f"),
-				*DeliveryCtx.Handle.DeliveryId.ToString(),
-				DeliveryCtx.Handle.InstanceIndex,
-				DeliveryCtx.Spec.StopPolicy.MaxDuration,
-				Elapsed);
-
-			Stop(Ctx, EDeliveryStopReasonV3::DurationElapsed);
-			return;
+			Params.AddIgnoredActor(Caster);
 		}
 	}
 
+	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("OverlapAll");
 
-	
-	TSet<TWeakObjectPtr<AActor>> NewSet;
+	TArray<FHitResult> Hits;
+	const bool bAny = DoOverlap(World, Origin, Rot, Spec.Shape, Profile, Params, Hits);
 
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), false);
-	if (DeliveryCtx.Spec.Query.bIgnoreCaster && Ctx.Caster)
-	{
-		Params.AddIgnoredActor(Ctx.Caster);
-	}
-
-	TArray<FOverlapResult> Overlaps;
-	const bool bAny = World->OverlapMultiByProfile( Overlaps, Center, FQuat::Identity, DeliveryCtx.Spec.Query.CollisionProfile, FCollisionShape::MakeSphere(Radius), Params ); 
-	UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Query: profile=%s radius=%.1f ignoreCaster=%d raw=%d any=%d center=%s"), *DeliveryCtx.Spec.Query.CollisionProfile.ToString(), Radius, DeliveryCtx.Spec.Query.bIgnoreCaster ? 1 : 0, Overlaps.Num(), bAny ? 1 : 0, *Center.ToString());
-	if (bAny) 
-	{ 
-		for (const FOverlapResult& O : Overlaps)
-		{
-			if (AActor* A = O.GetActor()) { NewSet.Add(A); }
-		}
-	}
-
-
-	// ================================
-	// Target writeback (Inside/Current -> TargetStore), deterministic order
-	// ================================
-	if (Ctx.TargetStore && DeliveryCtx.Spec.OutTargetSet != NAME_None)
-	{
-		TArray<AActor*> SortedActors;
-		BuildSortedActorsDeterministic(NewSet, SortedActors);
-
-		FTargetSetV3 OutSet;
-		OutSet.Targets.Reserve(SortedActors.Num());
-
-		for (AActor* A : SortedActors)
-		{
-			FTargetRefV3 Ref;
-			Ref.Actor = A;
-			OutSet.AddUnique(Ref);
-		}
-
-		Ctx.TargetStore->Set(DeliveryCtx.Spec.OutTargetSet, OutSet);
-
-		UE_LOG(LogIMOPDeliveryFieldV3, Log,
-			TEXT("Field Writeback: TargetSet=%s Count=%d"),
-			*DeliveryCtx.Spec.OutTargetSet.ToString(),
-			OutSet.Targets.Num());
-	}
-
-	
-	UDeliverySubsystemV3* Subsys = World->GetSubsystem<UDeliverySubsystemV3>();
-	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
-
-	// Deterministic iteration order (TSet is not deterministic)
+	// Build actor list (unique)
+	TSet<TWeakObjectPtr<AActor>> NewMembers;
 	TArray<AActor*> NewActors;
-	BuildSortedActorsDeterministic(NewSet, NewActors);
+	NewActors.Reserve(Hits.Num());
 
-	TArray<AActor*> OldActors;
-	BuildSortedActorsDeterministic(CurrentSet, OldActors);
-	int32 EnterCount = 0; 
-	
-	// === Enter === (deterministic)
-	if (DeliveryCtx.Spec.Field.bEmitEnterExit)
+	for (const FHitResult& H : Hits)
 	{
-		TArray<FDeliveryHitV3> EnterHits;
+		AActor* A = H.GetActor();
+		if (!A)
+		{
+			continue;
+		}
+		if (!NewMembers.Contains(A))
+		{
+			NewMembers.Add(A);
+			NewActors.Add(A);
+		}
+	}
+
+	SortActorsDeterministic(NewActors);
+
+	// Debug draw
+	const FDeliveryDebugDrawConfigV3 DebugCfg =
+		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+
+	if (DebugCfg.bEnable && DebugCfg.bDrawShape)
+	{
+		const float Dur = DebugCfg.Duration;
+		switch (Spec.Shape.Kind)
+		{
+			case EDeliveryShapeV3::Sphere:
+				DrawDebugSphere(World, Origin, Spec.Shape.Radius, 16, FColor::Green, false, Dur, 0, 1.f);
+				break;
+			case EDeliveryShapeV3::Capsule:
+				DrawDebugCapsule(World, Origin, Spec.Shape.HalfHeight, Spec.Shape.Radius, Rot, FColor::Green, false, Dur, 0, 1.f);
+				break;
+			case EDeliveryShapeV3::Box:
+				DrawDebugBox(World, Origin, Spec.Shape.Extents, Rot, FColor::Green, false, Dur, 0, 1.f);
+				break;
+			case EDeliveryShapeV3::Ray:
+			default:
+				DrawDebugPoint(World, Origin, 10.f, FColor::Green, false, Dur);
+				break;
+		}
+	}
+
+	if (DebugCfg.bEnable && DebugCfg.bDrawHits)
+	{
 		for (AActor* A : NewActors)
 		{
-			if (!A) { continue; }
+			DrawDebugPoint(World, A->GetActorLocation(), 8.f, FColor::Red, false, DebugCfg.Duration);
+		}
+	}
 
-			const TWeakObjectPtr<AActor> W(A);
-			if (!CurrentSet.Contains(W))
+	// Membership diff (for future events)
+	// Enter = in New but not in Current; Exit = in Current but not in New
+	if (Spec.Field.bEmitEnterExit)
+	{
+		for (const TWeakObjectPtr<AActor>& W : NewMembers)
+		{
+			if (!CurrentMembers.Contains(W))
 			{
-				FDeliveryHitV3 H;
-				H.Target = W;
-				H.Location = Center;
-				EnterHits.Add(H);
+				// Enter (future event hook)
 			}
 		}
-
-		EnterCount = EnterHits.Num();
-		if (EnterHits.Num() > 0)
+		for (const TWeakObjectPtr<AActor>& W : CurrentMembers)
 		{
-			FDeliveryEventContextV3 Ev;
-			Ev.Type = EDeliveryEventTypeV3::Enter;
-			Ev.Handle = DeliveryCtx.Handle;
-			Ev.PrimitiveId = "P0";
-			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
-			Ev.HitTags = DeliveryCtx.Spec.HitTags;
-			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Enter);
-			Ev.Caster = Ctx.Caster;
-			Ev.Hits = MoveTemp(EnterHits);
-
-			UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Enter: %d"), Ev.Hits.Num());
-			Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Enter, Ev);
-		}
-	}
-
-
-	// === Exit === (deterministic)
-	int32 ExitCount = 0;
-	if (DeliveryCtx.Spec.Field.bEmitEnterExit)
-	{
-		TArray<FDeliveryHitV3> ExitHits;
-		for (AActor* A : OldActors)
-		{
-			if (!A) { continue; }
-
-			const TWeakObjectPtr<AActor> W(A);
-			if (!NewSet.Contains(W))
+			if (!NewMembers.Contains(W))
 			{
-				FDeliveryHitV3 H;
-				H.Target = W;
-				H.Location = Center;
-				ExitHits.Add(H);
+				// Exit (future event hook)
 			}
 		}
-
-		ExitCount = ExitHits.Num();
-		if (ExitHits.Num() > 0)
-		{
-			FDeliveryEventContextV3 Ev;
-			Ev.Type = EDeliveryEventTypeV3::Exit;
-			Ev.Handle = DeliveryCtx.Handle;
-			Ev.PrimitiveId = "P0";
-			Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
-			Ev.HitTags = DeliveryCtx.Spec.HitTags;
-			Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Exit);
-			Ev.Caster = Ctx.Caster;
-			Ev.Hits = MoveTemp(ExitHits);
-
-			UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Exit: %d"), Ev.Hits.Num());
-			Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Exit, Ev);
-		}
 	}
 
+	CurrentMembers = MoveTemp(NewMembers);
 
-	// === Stay === (deterministic)
-	int32 StayCount = 0;
-	if (DeliveryCtx.Spec.Field.bEmitStay && NewActors.Num() > 0)
+	// Optional: write current set into TargetStore
+	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
+	if (OutSetName != NAME_None)
 	{
-		TArray<FDeliveryHitV3> StayHits;
-		StayHits.Reserve(NewActors.Num());
-
-		for (AActor* A : NewActors)
+		if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
 		{
-			if (!A) { continue; }
+			FTargetSetV3 OutSet;
+			OutSet.Targets.Reserve(NewActors.Num());
 
-			FDeliveryHitV3 H;
-			H.Target = A;
-			H.Location = Center;
-			StayHits.Add(H);
+			for (AActor* A : NewActors)
+			{
+				FTargetRefV3 R;
+				R.Actor = A;
+				OutSet.AddUnique(R);
+			}
+
+			Store->Set(OutSetName, OutSet);
 		}
-
-		StayCount = StayHits.Num();
-
-		FDeliveryEventContextV3 Ev;
-		Ev.Type = EDeliveryEventTypeV3::Stay;
-		Ev.Handle = DeliveryCtx.Handle;
-		Ev.PrimitiveId = "P0";
-		Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
-		Ev.HitTags = DeliveryCtx.Spec.HitTags;
-		Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stay);
-
-		Ev.Caster = Ctx.Caster;
-		Ev.Hits = MoveTemp(StayHits);
-
-		UE_LOG(LogIMOPDeliveryFieldV3, VeryVerbose, TEXT("Field Stay: %d"), Ev.Hits.Num());
-		Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stay, Ev);
 	}
 
-	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field Eval: prim=%s inside=%d enter=%d exit=%d stay=%d center=%s"),
-		TEXT("P0"), NewActors.Num(), EnterCount, ExitCount, StayCount, *Center.ToString());
+	UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field tick: %s/%s members=%d any=%d"),
+		*GroupHandle.DeliveryId.ToString(),
+		*PrimitiveId.ToString(),
+		CurrentMembers.Num(),
+		bAny ? 1 : 0);
 
-
-	CurrentSet = MoveTemp(NewSet);
+	return bAny;
 }
 
-void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, EDeliveryStopReasonV3 Reason)
+void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason)
 {
 	if (!bActive)
 	{
@@ -384,26 +275,11 @@ void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, EDeliveryStop
 	}
 
 	bActive = false;
-	CurrentSet.Reset();
+	CurrentMembers.Reset();
 
-	UDeliverySubsystemV3* Subsys = Ctx.GetWorld()->GetSubsystem<UDeliverySubsystemV3>();
-	const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
-
-	FDeliveryEventContextV3 Ev;
-	Ev.Type = EDeliveryEventTypeV3::Stopped;
-	Ev.Handle = DeliveryCtx.Handle;
-	Ev.PrimitiveId = "P0";
-	Ev.StopReminder = Reason;
-	Ev.DeliveryTags = DeliveryCtx.Spec.DeliveryTags;
-	Ev.HitTags = DeliveryCtx.Spec.HitTags;
-	Ev.HitTags.AppendTags(DeliveryCtx.Spec.EventHitTags.Stopped);
-	Ev.Caster = Ctx.Caster;
-
-	UE_LOG(LogIMOPDeliveryFieldV3, Log,
-		TEXT("Field Stop: Id=%s Inst=%d Reason=%d"),
-		*DeliveryCtx.Handle.DeliveryId.ToString(),
-		DeliveryCtx.Handle.InstanceIndex,
+	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field stopped: %s/%s inst=%d reason=%d"),
+		*GroupHandle.DeliveryId.ToString(),
+		*PrimitiveId.ToString(),
+		GroupHandle.InstanceIndex,
 		(int32)Reason);
-
-	Subsys->EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stopped, Ev);
 }

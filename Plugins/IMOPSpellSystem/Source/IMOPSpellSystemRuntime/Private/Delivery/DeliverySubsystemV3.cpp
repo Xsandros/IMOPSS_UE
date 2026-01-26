@@ -33,7 +33,8 @@ void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)
 	{
 		if (USpellEventBusSubsystemV3* Bus = World->GetSubsystem<USpellEventBusSubsystemV3>())
 		{
-			SpellEndSub = Bus->Subscribe(this, FGameplayTag()); // all
+			// Subscribe to all spell events; we only react to end-ish events in OnSpellEvent.
+			SpellEndSub = Bus->Subscribe(this, FGameplayTag());
 		}
 	}
 }
@@ -108,6 +109,7 @@ void UDeliverySubsystemV3::OnSpellEvent(const FSpellEventV3& Ev)
 		return;
 	}
 
+	// Keep it robust even if tag list changes:
 	const FString TagStr = Ev.EventTag.ToString();
 	if (TagStr.Contains(TEXT("End")) || TagStr.Contains(TEXT("Ended")) || TagStr.Contains(TEXT("Stop")))
 	{
@@ -136,6 +138,7 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	}
 
 	const float Now = GetWorld()->GetTimeSeconds();
+
 	const int32 InstanceIndex = AllocateInstanceIndex(Ctx.RuntimeGuid, Spec.DeliveryId);
 
 	FDeliveryHandleV3 Handle;
@@ -160,7 +163,6 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	for (int32 i = 0; i < Spec.Primitives.Num(); ++i)
 	{
 		const FDeliveryPrimitiveSpecV3& PSpec = Spec.Primitives[i];
-
 		if (PSpec.PrimitiveId == NAME_None)
 		{
 			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Primitive has None PrimitiveId. DeliveryId=%s idx=%d"),
@@ -267,9 +269,9 @@ TObjectPtr<UDeliveryDriverBaseV3> UDeliverySubsystemV3::CreateDriverForKind(EDel
 	switch (Kind)
 	{
 		case EDeliveryKindV3::InstantQuery: return NewObject<UDeliveryDriver_InstantQueryV3>(this);
-		case EDeliveryKindV3::Field:       return NewObject<UDeliveryDriver_FieldV3>(this);
-		case EDeliveryKindV3::Mover:       return NewObject<UDeliveryDriver_MoverV3>(this);
-		case EDeliveryKindV3::Beam:        return NewObject<UDeliveryDriver_BeamV3>(this);
+		case EDeliveryKindV3::Field:        return NewObject<UDeliveryDriver_FieldV3>(this);
+		case EDeliveryKindV3::Mover:        return NewObject<UDeliveryDriver_MoverV3>(this);
+		case EDeliveryKindV3::Beam:         return NewObject<UDeliveryDriver_BeamV3>(this);
 		default: break;
 	}
 	return nullptr;
@@ -301,7 +303,6 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 	const FDeliverySpecV3& Spec = Group->GroupSpec;
 
 	bool bDoEval = false;
-
 	switch (Spec.PoseUpdatePolicy)
 	{
 		case EDeliveryPoseUpdatePolicyV3::EveryTick:
@@ -309,7 +310,6 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 			break;
 
 		case EDeliveryPoseUpdatePolicyV3::OnStart:
-			// Only if cache empty
 			bDoEval = (Group->RigCache.EmittersWS.Num() == 0);
 			break;
 
@@ -348,11 +348,11 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 		Spec.Attach,
 		Spec.Rig,
 		NowSeconds - Group->StartTimeSeconds,
-		Eval
-	);
+		Eval);
 
 	Group->RigCache.RootWS = Eval.RootWorld;
 	Group->RigCache.EmittersWS = Eval.EmittersWorld;
+	Group->RigCache.EmitterNames = Eval.EmitterNames; // ✅ FIX (was missing in repo)
 
 	LastRigEvalTimeByHandle.Add(Group->GroupHandle, NowSeconds);
 
@@ -374,7 +374,6 @@ FTransform UDeliverySubsystemV3::ResolveAnchorPoseWS(const FSpellExecContextV3& 
 	const FDeliveryAnchorRefV3& A = PrimitiveCtx.Spec.Anchor;
 
 	FTransform Base = Group->RigCache.RootWS;
-
 	switch (A.Kind)
 	{
 		case EDeliveryAnchorRefKindV3::Root:

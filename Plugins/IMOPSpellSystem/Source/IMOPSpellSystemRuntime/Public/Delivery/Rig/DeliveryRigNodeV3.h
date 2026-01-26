@@ -11,10 +11,6 @@
  * Determinism rules:
  * - No unseeded randomness here.
  * - Pure function of (TimeSeconds + node parameters).
- *
- * Composition rule (important):
- * - Nodes should generally return "Delta * BasePose" (or "BasePose then Delta"), but stay consistent per node.
- * - We keep everything as transforms so the evaluator can remain stateless.
  */
 UCLASS(Abstract, BlueprintType, EditInlineNew, DefaultToInstanced)
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigNodeV3 : public UObject
@@ -120,12 +116,11 @@ public:
 };
 
 // ============================================================
-// Composition nodes (to make rigs expressive without special-casing)
+// Composition nodes (expressive rigs without special-casing)
 // ============================================================
 
 /**
  * Compose(A, B): Output = A(Time) * B(Time)
- * Useful for chaining deltas or building "helix around beam" style motion.
  */
 UCLASS(BlueprintType, EditInlineNew, DefaultToInstanced)
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigNode_ComposeV3 : public UDeliveryRigNodeV3
@@ -148,8 +143,7 @@ public:
 };
 
 /**
- * Lerp(A, B, Alpha): Alpha can be constant or driven by time via AlphaFrequency.
- * Output blends translation+rotation+scale in a deterministic way.
+ * Lerp(A, B, Alpha): deterministic blend of translation/rotation/scale.
  */
 UCLASS(BlueprintType, EditInlineNew, DefaultToInstanced)
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigNode_LerpV3 : public UDeliveryRigNodeV3
@@ -182,10 +176,9 @@ public:
 		const FTransform TA = A ? A->Evaluate(TimeSeconds) : FTransform::Identity;
 		const FTransform TB = B ? B->Evaluate(TimeSeconds) : FTransform::Identity;
 
-		// Deterministic transform blend
 		const FVector L = FMath::Lerp(TA.GetLocation(), TB.GetLocation(), T);
 		const FQuat   Q = FQuat::Slerp(TA.GetRotation(), TB.GetRotation(), T).GetNormalized();
-		const FVector S = FMath::Lerp(TA.GetScale3D(),  TB.GetScale3D(),  T);
+		const FVector S = FMath::Lerp(TA.GetScale3D(), TB.GetScale3D(), T);
 
 		return FTransform(Q, L, S);
 	}

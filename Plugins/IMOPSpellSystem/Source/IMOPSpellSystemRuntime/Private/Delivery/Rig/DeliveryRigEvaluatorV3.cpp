@@ -93,7 +93,6 @@ void UDeliveryRigEvaluatorV3::Evaluate(
 	}
 
 	// Forward-compatible: propagate emitter names if authoring provided them
-	// (safe even if EmitterNames is empty or mismatched)
 	if (Rig->EmitterNames.Num() == OutResult.EmittersWorld.Num())
 	{
 		OutResult.EmitterNames = Rig->EmitterNames;

@@ -40,7 +40,7 @@ public:
 	 * Optional: names parallel to EmitterNodes (can be empty).
 	 * If filled, should be same length as EmitterNodes.
 	 *
-	 * NOTE: Not used by current evaluator by default; it’s a forward-compatible hook.
+	 * NOTE: Evaluator can propagate these names to results without affecting older users.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	TArray<FName> EmitterNames;

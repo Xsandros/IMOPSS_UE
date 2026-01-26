@@ -3,10 +3,10 @@
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
 
+#include "Actions/SpellActionExecutorV3.h" // FSpellExecContextV3 (value member!)
 #include "Delivery/DeliveryTypesV3.h"
 #include "Delivery/DeliverySpecV3.h"
 #include "Delivery/DeliveryContextV3.h"
-
 #include "Delivery/Blackboard/DeliveryBlackboardV3.h"
 
 #include "DeliveryGroupRuntimeV3.generated.h"
@@ -26,12 +26,16 @@ struct FDeliveryRigCacheV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	TArray<FTransform> EmittersWS;
+
+	// Optional: parallel array for authoring/debug (safe if empty or mismatch)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	TArray<FName> EmitterNames;
 };
 
 /**
  * Group runtime: owned by DeliverySubsystem.
  * Holds:
- * - Spec + Context snapshot
+ * - Spec + ExecContext snapshot
  * - Blackboard
  * - Rig cache
  * - Per-primitive contexts and drivers
@@ -62,7 +66,7 @@ public:
 	UPROPERTY()
 	FDeliveryBlackboardV3 Blackboard;
 
-	// Latest rig evaluation
+	// Latest rig evaluation (world space)
 	UPROPERTY()
 	FDeliveryRigCacheV3 RigCache;
 

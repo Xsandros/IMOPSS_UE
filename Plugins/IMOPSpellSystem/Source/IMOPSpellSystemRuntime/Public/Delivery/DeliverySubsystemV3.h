@@ -14,11 +14,20 @@
 
 class UDeliveryDriverBaseV3;
 class UDeliveryGroupRuntimeV3;
+struct FSpellExecContextV3;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogIMOPDeliveryV3, Log, All);
 
+/**
+ * DeliverySubsystemV3
+ * - Owns and ticks active delivery groups.
+ * - Server-authoritative, deterministic-friendly.
+ * - Spawns one driver per primitive in a composite spec.
+ */
 UCLASS()
-class IMOPSPELLSYSTEMRUNTIME_API UDeliverySubsystemV3 : public UTickableWorldSubsystem, public ISpellEventListenerV3
+class IMOPSPELLSYSTEMRUNTIME_API UDeliverySubsystemV3
+	: public UTickableWorldSubsystem
+	, public ISpellEventListenerV3
 {
 	GENERATED_BODY()
 
@@ -30,11 +39,13 @@ public:
 	virtual bool IsTickable() const override { return true; }
 	virtual TStatId GetStatId() const override;
 
+	// ISpellEventListenerV3
 	virtual void OnSpellEvent(const FSpellEventV3& Ev) override;
 
+public:
 	bool StartDelivery(const FSpellExecContextV3& Ctx, const FDeliverySpecV3& Spec, FDeliveryHandleV3& OutHandle);
-	bool StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason);
 
+	bool StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason);
 	bool StopById(const FSpellExecContextV3& Ctx, FName DeliveryId, EDeliveryStopReasonV3 Reason);
 	bool StopByPrimitiveId(const FSpellExecContextV3& Ctx, FName DeliveryId, FName PrimitiveId, EDeliveryStopReasonV3 Reason);
 
@@ -47,6 +58,7 @@ private:
 	int32 ComputeGroupSeed(const FGuid& RuntimeGuid, FName DeliveryId, int32 InstanceIndex) const;
 
 	void EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, float NowSeconds);
+
 	FTransform ResolveAnchorPoseWS(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) const;
 
 	void StopAllForRuntimeGuid(const FGuid& RuntimeGuid, EDeliveryStopReasonV3 Reason);
@@ -61,9 +73,10 @@ private:
 	UPROPERTY()
 	FSpellEventSubscriptionHandleV3 SpellEndSub;
 
+	// RuntimeGuid -> (DeliveryId -> NextInstanceIndex)
 	TMap<FGuid, TMap<FName, int32>> NextInstanceByRuntimeAndId;
 
-	// NEW: per group last rig eval timestamp (world seconds)
+	// Per group last rig eval timestamp (world seconds)
 	UPROPERTY()
 	TMap<FDeliveryHandleV3, float> LastRigEvalTimeByHandle;
 };

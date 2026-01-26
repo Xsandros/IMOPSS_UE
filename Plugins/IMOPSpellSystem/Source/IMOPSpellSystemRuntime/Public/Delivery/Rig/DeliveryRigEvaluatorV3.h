@@ -1,8 +1,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/Object.h"
+
 #include "Delivery/Rig/DeliveryRigV3.h"
 #include "Delivery/DeliveryTypesV3.h"
+
 #include "DeliveryRigEvaluatorV3.generated.h"
 
 /**

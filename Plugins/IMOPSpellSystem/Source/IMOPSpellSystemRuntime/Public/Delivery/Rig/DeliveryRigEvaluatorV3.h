@@ -3,12 +3,17 @@
 #include "CoreMinimal.h"
 #include "Delivery/Rig/DeliveryRigV3.h"
 #include "Delivery/DeliveryTypesV3.h"
-
 #include "DeliveryRigEvaluatorV3.generated.h"
 
 /**
  * Result of evaluating a DeliveryRig at a given time.
  * World-space transforms (WS).
+ *
+ * Contract:
+ * - RootWorld is the group root in world space after Attach is applied.
+ * - EmittersWorld are world-space transforms (EmitterLS * RootWorld).
+ * - Optional: EmitterNames is parallel to EmittersWorld (same length), may be empty.
+ * - Optional: AnchorsWorld provides named anchors in world-space (can be empty).
  */
 USTRUCT(BlueprintType)
 struct FDeliveryRigEvalResultV3
@@ -20,6 +25,14 @@ struct FDeliveryRigEvalResultV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
 	TArray<FTransform> EmittersWorld;
+
+	// Optional parallel array (can be empty). If filled, must match EmittersWorld.Num().
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	TArray<FName> EmitterNames;
+
+	// Optional named anchors (can be empty).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
+	TMap<FName, FTransform> AnchorsWorld;
 };
 
 /**

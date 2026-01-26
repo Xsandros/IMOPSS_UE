@@ -5,7 +5,7 @@
 #include "Exec_StartDeliveryV3.generated.h"
 
 /**
- * Action: Action.Delivery.Start
+ * Action.Delivery.Start
  * Payload: FPayload_DeliveryStartV3
  */
 UCLASS()

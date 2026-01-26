@@ -6,10 +6,11 @@
 
 /**
  * InstantQuery driver (Composite-first):
- * - Evaluates once on Start (no Tick needed).
- * - Uses Ray shape semantics (line trace) by default; if shape is Sphere/Box/Capsule we do sweep.
- * - Writes hits to TargetStore if OutTargetSetName is set (or group default).
- * - Debug draw for path + hits.
+ * - Evaluates once on Start (no Tick).
+ * - Uses PrimitiveCtx.FinalPoseWS as origin+forward.
+ * - Ray => line trace; other shapes => sweep (or overlap if Spec.Query.Mode==Overlap).
+ * - Writes hit actors into TargetStore (PrimitiveCtx.Spec.OutTargetSetName or Group default).
+ * - DebugDraw uses Group defaults unless primitive override enabled.
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_InstantQueryV3 : public UDeliveryDriverBaseV3

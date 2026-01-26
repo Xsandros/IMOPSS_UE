@@ -1,9 +1,10 @@
 #include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
 
-#include "Delivery/Rig/DeliveryRigNodeV3.h"
+#include "Delivery/Rig/DeliveryRigV3.h"
 
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Components/SceneComponent.h"
 
 static FTransform GetAttachBaseWS(UWorld* World, AActor* Caster, const FDeliveryAttachV3& Attach)
 {
@@ -11,7 +12,7 @@ static FTransform GetAttachBaseWS(UWorld* World, AActor* Caster, const FDelivery
 	{
 		case EDeliveryAttachModeV3::World:
 		{
-			// World origin with local offset
+			// World origin with local offset already applied (authoring uses LocalOffset directly)
 			return Attach.LocalOffset;
 		}
 
@@ -19,8 +20,17 @@ static FTransform GetAttachBaseWS(UWorld* World, AActor* Caster, const FDelivery
 		{
 			if (Caster)
 			{
-				// If you later want skeletal sockets, wire it here (component lookup).
-				// For now: treat as actor transform + local.
+				if (Attach.SocketName != NAME_None)
+				{
+					if (USceneComponent* Root = Caster->GetRootComponent())
+					{
+						if (Root->DoesSocketExist(Attach.SocketName))
+						{
+							const FTransform SocketWS = Root->GetSocketTransform(Attach.SocketName, RTS_World);
+							return Attach.LocalOffset * SocketWS;
+						}
+					}
+				}
 				return Attach.LocalOffset * Caster->GetActorTransform();
 			}
 			return Attach.LocalOffset;
@@ -57,8 +67,9 @@ void UDeliveryRigEvaluatorV3::Evaluate(
 {
 	OutResult.RootWorld = FTransform::Identity;
 	OutResult.EmittersWorld.Reset();
+	OutResult.EmitterNames.Reset();
+	OutResult.AnchorsWorld.Reset();
 
-	// Base from attach
 	const FTransform BaseWS = GetAttachBaseWS(World, Caster, Attach);
 
 	// No rig => root = base, no emitters
@@ -68,18 +79,10 @@ void UDeliveryRigEvaluatorV3::Evaluate(
 		return;
 	}
 
-	// Evaluate root pose from rig (local space), then convert to WS.
-	// Your Rig class is assumed to hold Nodes that can be evaluated at time t.
-	// We keep this extremely compatible: if you already have EvaluateRoot/EvaluateEmitters functions,
-	// implement them inside UDeliveryRigV3 and call them here.
+	// Evaluate local-space from rig
 	FTransform RootLS = FTransform::Identity;
 	TArray<FTransform> EmittersLS;
-
-	// --- Minimal contract (must exist in your Rig) ---
-	// If your current UDeliveryRigV3 already has different APIs, change ONLY these calls
-	// to match your existing implementation (no other code depends on internal rig structure).
 	Rig->Evaluate(TimeSeconds, RootLS, EmittersLS);
-	// -----------------------------------------------
 
 	OutResult.RootWorld = RootLS * BaseWS;
 
@@ -87,5 +90,12 @@ void UDeliveryRigEvaluatorV3::Evaluate(
 	for (const FTransform& ELS : EmittersLS)
 	{
 		OutResult.EmittersWorld.Add(ELS * OutResult.RootWorld);
+	}
+
+	// Forward-compatible: propagate emitter names if authoring provided them
+	// (safe even if EmitterNames is empty or mismatched)
+	if (Rig->EmitterNames.Num() == OutResult.EmittersWorld.Num())
+	{
+		OutResult.EmitterNames = Rig->EmitterNames;
 	}
 }

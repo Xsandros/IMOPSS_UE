@@ -5,7 +5,7 @@
 #include "Exec_StopDeliveryV3.generated.h"
 
 /**
- * Action: Action.Delivery.Stop
+ * Action.Delivery.Stop
  * Payload: FPayload_DeliveryStopV3
  */
 UCLASS()

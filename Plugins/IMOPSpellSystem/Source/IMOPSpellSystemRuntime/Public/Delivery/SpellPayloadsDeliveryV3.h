@@ -1,21 +1,15 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
 #include "Delivery/DeliveryTypesV3.h"
 #include "Delivery/DeliverySpecV3.h"
+
 #include "SpellPayloadsDeliveryV3.generated.h"
 
 /**
- * Action Payloads for Delivery (Phase 4B Composite-first)
- *
- * Notes:
- * - Start uses full FDeliverySpecV3 (composite group).
- * - Stop supports:
- *   - explicit Handle
- *   - DeliveryId (stop all instances with that id in the runtime)
- *   - DeliveryId + PrimitiveId (stop one primitive in all matching groups)
+ * Payload: Start a composite delivery group.
  */
-
 USTRUCT(BlueprintType)
 struct FPayload_DeliveryStartV3
 {
@@ -25,23 +19,29 @@ struct FPayload_DeliveryStartV3
 	FDeliverySpecV3 Spec;
 };
 
+/**
+ * Payload: Stop delivery by:
+ * - Handle (preferred when known), OR
+ * - DeliveryId (stop all instances of that DeliveryId for this runtime), OR
+ * - DeliveryId + PrimitiveId (stop a single primitive in all matching instances)
+ */
 USTRUCT(BlueprintType)
 struct FPayload_DeliveryStopV3
 {
 	GENERATED_BODY()
 
-	// Stop by Handle (preferred when stored)
+	// If true, use Handle
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	bool bUseHandle = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryHandleV3 Handle;
 
-	// Stop by DeliveryId (within runtime)
+	// Fallback stop by id
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FName DeliveryId = NAME_None;
 
-	// Optional: stop a specific primitive (requires DeliveryId)
+	// Optional stop by primitive
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	bool bUsePrimitiveId = false;
 

@@ -19,12 +19,15 @@ public class IMOPSpellSystemRuntime : ModuleRules
 			"SlateCore"
 		});
 
-
-		PrivateDependencyModuleNames.AddRange(new string[] {
-			"Projects",      // IPluginManager (falls du es noch irgendwo nutzt)
-			"StructUtils",   // FInstancedStruct (habt ihr in Phase 1)
-			"UMG",            // nur falls UI; sonst weg
-			"PhysicsCore" // falls du Overlaps/Collision tiefer nutzt (oft nicht nötig, aber safe)
+		PrivateDependencyModuleNames.AddRange(new[]
+		{
+			"Projects",
+			"StructUtils",
+			"PhysicsCore"
 		});
+
+		// Not strictly required, but helps when adding new folders rapidly.
+		PublicIncludePaths.AddRange(new[] { "IMOPSpellSystemRuntime/Public" });
+		PrivateIncludePaths.AddRange(new[] { "IMOPSpellSystemRuntime/Private" });
 	}
 }

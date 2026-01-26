@@ -6,14 +6,14 @@
 
 /**
  * Mover driver (Composite-first):
- * - Simulates a projectile-like mover deterministically on the server (and in replays).
- * - Uses PrimitiveCtx.FinalPoseWS as spawn pose, then integrates forward.
- * - Optional: homing uses TargetStore (HomingTargetSet) to pick first target.
- * - Optional: sweep hit test along segment each tick/interval.
- * - Debug draw for path + hits.
+ * - Simulates a moving primitive (projectile-ish) in world space.
+ * - Motion modes: Straight / Ballistic / Homing (config in Spec.Mover).
+ * - Performs sweep along movement step using Spec.Shape + Spec.Query.
+ * - Optional pierce; optional stop-on-hit.
+ * - Writes hit targets to TargetStore (OutTargetSetName / group default).
+ * - Debug draw path + hits + shape.
  *
- * NOTE: For now, we keep mover state inside the driver (not in blackboard).
- *       In later phases, you can migrate state to group blackboard for replication snapshots.
+ * Determinism: server authoritative, deterministic ordering + no RNG.
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_MoverV3 : public UDeliveryDriverBaseV3
@@ -29,29 +29,41 @@ private:
 	UPROPERTY()
 	FDeliveryContextV3 LocalCtx;
 
-	// Current mover state
+	// Sim state
 	UPROPERTY()
-	FVector PosWS = FVector::ZeroVector;
+	FVector PositionWS = FVector::ZeroVector;
 
 	UPROPERTY()
-	FVector VelWS = FVector::ZeroVector;
+	FVector VelocityWS = FVector::ZeroVector;
 
 	UPROPERTY()
-	float DistanceTraveled = 0.f;
+	float TraveledDistance = 0.f;
+
+	UPROPERTY()
+	int32 PierceHits = 0;
 
 	UPROPERTY()
 	float NextSimTimeSeconds = 0.f;
 
-	UPROPERTY()
-	int32 PierceCount = 0;
-
 private:
 	static FName ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
+	static void SortHitsDeterministic(TArray<FHitResult>& Hits, const FVector& From);
 
-	bool TryResolveHomingTargetLocation(const FSpellExecContextV3& Ctx, const struct FDeliveryMoverConfigV3& MoverCfg, FVector& OutTargetLoc) const;
+	static FCollisionShape MakeCollisionShape(const FDeliveryShapeV3& Shape);
+	static FQuat RotationForSweep(const FDeliveryShapeV3& Shape, const FTransform& Pose);
 
-	bool StepSim(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float StepDt);
-	bool DoSweepHit(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FVector& From, const FVector& To, TArray<FHitResult>& OutHits) const;
+	bool GetHomingTargetLocation(const FSpellExecContextV3& Ctx, const FDeliveryMoverConfigV3& M, FVector& OutLoc) const;
 
-	void DebugDrawStep(UWorld* World, const struct FDeliveryDebugDrawConfigV3& DebugCfg, const FVector& From, const FVector& To) const;
+	bool StepSim(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float StepSeconds);
+	bool SweepMoveAndCollectHits(
+		const FSpellExecContextV3& Ctx,
+		UWorld* World,
+		const FDeliveryPrimitiveSpecV3& Spec,
+		const FVector& From,
+		const FVector& To,
+		TArray<FHitResult>& OutHits
+	) const;
+
+	void DebugDraw(const FSpellExecContextV3& Ctx, const UDeliveryGroupRuntimeV3* Group, const FDeliveryPrimitiveSpecV3& Spec, const FVector& From, const FVector& To, const TArray<FHitResult>& Hits) const;
+	void WriteHitsToTargetStore(const FSpellExecContextV3& Ctx, const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx, const TArray<FHitResult>& Hits) const;
 };

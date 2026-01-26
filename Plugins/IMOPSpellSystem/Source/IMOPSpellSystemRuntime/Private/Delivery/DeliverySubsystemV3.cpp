@@ -33,8 +33,7 @@ void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)
 	{
 		if (USpellEventBusSubsystemV3* Bus = World->GetSubsystem<USpellEventBusSubsystemV3>())
 		{
-			// Subscribe broadly; filter in OnSpellEvent (compile-first)
-			SpellEndSub = Bus->Subscribe(this, FGameplayTag());
+			SpellEndSub = Bus->Subscribe(this, FGameplayTag()); // all
 		}
 	}
 }
@@ -51,6 +50,7 @@ void UDeliverySubsystemV3::Deinitialize()
 
 	ActiveGroups.Reset();
 	NextInstanceByRuntimeAndId.Reset();
+	LastRigEvalTimeByHandle.Reset();
 
 	Super::Deinitialize();
 }
@@ -78,7 +78,6 @@ void UDeliverySubsystemV3::Tick(float DeltaSeconds)
 		const FSpellExecContextV3& Ctx = Group->CtxSnapshot;
 
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Time);
-		// If key isn't registered, WriteFloat will be rejected by ownership rules; that's fine for compile-first.
 		Group->Blackboard.WriteFloat("Time.Elapsed", Now - Group->StartTimeSeconds, EDeliveryBBOwnerV3::Group);
 
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Rig);
@@ -104,7 +103,6 @@ void UDeliverySubsystemV3::Tick(float DeltaSeconds)
 
 void UDeliverySubsystemV3::OnSpellEvent(const FSpellEventV3& Ev)
 {
-	// Compile-first heuristic: treat tags containing End/Ended/Stop as end-of-runtime.
 	if (!Ev.RuntimeGuid.IsValid())
 	{
 		return;
@@ -132,7 +130,7 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 
 	if (Spec.Primitives.Num() == 0)
 	{
-		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Spec.Primitives is empty (Composite-first requires at least 1 primitive). DeliveryId=%s"),
+		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Spec.Primitives is empty (Composite-first requires >=1). DeliveryId=%s"),
 			*Spec.DeliveryId.ToString());
 		return false;
 	}
@@ -152,14 +150,13 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	Group->StartTimeSeconds = Now;
 	Group->GroupSeed = ComputeGroupSeed(Ctx.RuntimeGuid, Spec.DeliveryId, InstanceIndex);
 
-	// Blackboard init exactly once (no re-init)
 	Group->Blackboard.InitFromSpec(Spec.BlackboardInit, Spec.OwnershipRules);
 
-	// Evaluate rig immediately
+	// Evaluate rig immediately + record time
 	Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Rig);
 	EvaluateRigIfNeeded(Group, Now);
+	LastRigEvalTimeByHandle.Add(Handle, Now);
 
-	// Spawn drivers per primitive
 	for (int32 i = 0; i < Spec.Primitives.Num(); ++i)
 	{
 		const FDeliveryPrimitiveSpecV3& PSpec = Spec.Primitives[i];
@@ -304,19 +301,39 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 	const FDeliverySpecV3& Spec = Group->GroupSpec;
 
 	bool bDoEval = false;
+
 	switch (Spec.PoseUpdatePolicy)
 	{
 		case EDeliveryPoseUpdatePolicyV3::EveryTick:
 			bDoEval = true;
 			break;
-		case EDeliveryPoseUpdatePolicyV3::Interval:
-			bDoEval = (Spec.PoseUpdateInterval <= 0.f) ? true : ((NowSeconds - Group->StartTimeSeconds) >= Spec.PoseUpdateInterval);
-			break;
+
 		case EDeliveryPoseUpdatePolicyV3::OnStart:
-		default:
-			// Evaluate only if cache seems empty
+			// Only if cache empty
 			bDoEval = (Group->RigCache.EmittersWS.Num() == 0);
 			break;
+
+		case EDeliveryPoseUpdatePolicyV3::Interval:
+		default:
+		{
+			const float Interval = FMath::Max(0.f, Spec.PoseUpdateInterval);
+			if (Interval <= 0.f)
+			{
+				bDoEval = true;
+				break;
+			}
+
+			const float* Last = LastRigEvalTimeByHandle.Find(Group->GroupHandle);
+			if (!Last)
+			{
+				bDoEval = true;
+			}
+			else
+			{
+				bDoEval = (NowSeconds - *Last) >= Interval;
+			}
+			break;
+		}
 	}
 
 	if (!bDoEval)
@@ -337,7 +354,8 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 	Group->RigCache.RootWS = Eval.RootWorld;
 	Group->RigCache.EmittersWS = Eval.EmittersWorld;
 
-	// Update primitive anchor poses
+	LastRigEvalTimeByHandle.Add(Group->GroupHandle, NowSeconds);
+
 	for (auto& Pair : Group->PrimitiveCtxById)
 	{
 		FDeliveryContextV3& PCtx = Pair.Value;
@@ -370,10 +388,6 @@ FTransform UDeliverySubsystemV3::ResolveAnchorPoseWS(const FSpellExecContextV3& 
 			}
 			break;
 
-		// Future hooks
-		case EDeliveryAnchorRefKindV3::EmitterName:
-		case EDeliveryAnchorRefKindV3::CasterSocket:
-		case EDeliveryAnchorRefKindV3::TargetSet:
 		default:
 			break;
 	}
@@ -400,7 +414,6 @@ void UDeliverySubsystemV3::StopAllForRuntimeGuid(const FGuid& RuntimeGuid, EDeli
 
 		if (UDeliveryGroupRuntimeV3* Group = ActiveGroups.FindRef(H))
 		{
-			// Use stored snapshot so we don't need to fabricate an exec context.
 			StopGroupInternal(Group->CtxSnapshot, H, Reason);
 		}
 	}
@@ -452,6 +465,7 @@ bool UDeliverySubsystemV3::StopGroupInternal(const FSpellExecContextV3& Ctx, con
 	Group->PrimitiveCtxById.Reset();
 
 	ActiveGroups.Remove(Handle);
+	LastRigEvalTimeByHandle.Remove(Handle);
 
 	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StopDelivery: Group %s #%d stopped (Reason=%d)"),
 		*Handle.DeliveryId.ToString(), Handle.InstanceIndex, (int32)Reason);

@@ -2,52 +2,41 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
-#include "Engine/HitResult.h"
 
 #include "Delivery/DeliveryTypesV3.h"
 
 #include "DeliveryEventContextV3.generated.h"
 
 /**
- * Payload for delivery-related events (Phase 4+).
- * We keep it flexible and purely data-driven so later phases (Presentation/Net/Trace)
- * can reuse it without rewrites.
+ * Future-proof delivery event payload (Phase 12+ can use it for VFX/SFX).
+ * For now it is optional scaffolding; we can emit this later via SpellTrace or EventBus.
  */
 USTRUCT(BlueprintType)
 struct FDeliveryEventContextV3
 {
 	GENERATED_BODY()
 
-	// Which group/primitive produced this event
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
 	FDeliveryHandleV3 GroupHandle;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
 	FName PrimitiveId = NAME_None;
 
-	// Optional semantic tags for the event (in addition to the SpellEvent tag)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
-	FGameplayTagContainer DeliveryTags;
+	FGameplayTag EventTag;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
-	FGameplayTagContainer HitTags;
-
-	// Common payload fields
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
-	FVector OriginWS = FVector::ZeroVector;
+	TWeakObjectPtr<AActor> Instigator;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
-	FVector DirectionWS = FVector::ForwardVector;
+	TWeakObjectPtr<AActor> HitActor;
 
-	// For hit/trace events
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
-	TArray<FHitResult> Hits;
+	FVector HitLocation = FVector::ZeroVector;
 
-	// Convenience: first hit actor list (optional)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
-	TArray<TWeakObjectPtr<AActor>> HitActors;
+	FVector HitNormal = FVector::UpVector;
 
-	// Optional: where hits were written (if any)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Event")
-	FName OutTargetSetName = NAME_None;
+	FGameplayTagContainer Tags;
 };

@@ -1,11 +1,69 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameplayTagContainer.h"
+#include "UObject/NoExportTypes.h"
+
 #include "DeliveryTypesV3.generated.h"
 
 // ============================================================
-// Handle
+// Core enums
+// ============================================================
+
+UENUM(BlueprintType)
+enum class EDeliveryKindV3 : uint8
+{
+	InstantQuery,
+	Field,
+	Mover,
+	Beam
+};
+
+UENUM(BlueprintType)
+enum class EDeliveryStopReasonV3 : uint8
+{
+	Manual,
+	SpellEnded,
+	Expired,
+	OnFirstHit,
+	Failed
+};
+
+UENUM(BlueprintType)
+enum class EDeliveryPoseUpdatePolicyV3 : uint8
+{
+	EveryTick,
+	Interval,
+	OnStart
+};
+
+UENUM(BlueprintType)
+enum class EDeliveryQueryModeV3 : uint8
+{
+	LineTrace,
+	Sweep,
+	Overlap
+};
+
+UENUM(BlueprintType)
+enum class EDeliveryShapeV3 : uint8
+{
+	Sphere,
+	Box,
+	Capsule,
+	Ray
+};
+
+UENUM(BlueprintType)
+enum class EDeliveryAttachModeV3 : uint8
+{
+	Caster,
+	World,
+	CasterSocket,
+	TargetActor
+};
+
+// ============================================================
+// Handle / identity
 // ============================================================
 
 USTRUCT(BlueprintType)
@@ -22,73 +80,23 @@ struct FDeliveryHandleV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	int32 InstanceIndex = 0;
 
-	bool IsValid() const
+	friend bool operator==(const FDeliveryHandleV3& A, const FDeliveryHandleV3& B)
 	{
-		return RuntimeGuid.IsValid() && DeliveryId != NAME_None;
+		return A.RuntimeGuid == B.RuntimeGuid && A.DeliveryId == B.DeliveryId && A.InstanceIndex == B.InstanceIndex;
 	}
 
-	bool operator==(const FDeliveryHandleV3& Other) const
+	friend uint32 GetTypeHash(const FDeliveryHandleV3& H)
 	{
-		return RuntimeGuid == Other.RuntimeGuid
-			&& DeliveryId == Other.DeliveryId
-			&& InstanceIndex == Other.InstanceIndex;
+		uint32 X = ::GetTypeHash(H.RuntimeGuid);
+		X = HashCombine(X, ::GetTypeHash(H.DeliveryId));
+		X = HashCombine(X, ::GetTypeHash(H.InstanceIndex));
+		return X;
 	}
 };
 
-FORCEINLINE uint32 GetTypeHash(const FDeliveryHandleV3& H)
-{
-	uint32 X = ::GetTypeHash(H.RuntimeGuid);
-	X = HashCombineFast(X, ::GetTypeHash(H.DeliveryId));
-	X = HashCombineFast(X, ::GetTypeHash(H.InstanceIndex));
-	return X;
-}
-
 // ============================================================
-// Core enums
+// Shape + query policy
 // ============================================================
-
-UENUM(BlueprintType)
-enum class EDeliveryKindV3 : uint8
-{
-	InstantQuery,
-	Field,
-	Mover,
-	Beam
-};
-
-UENUM(BlueprintType)
-enum class EDeliveryPoseUpdatePolicyV3 : uint8
-{
-	OnStart,
-	EveryTick,
-	Interval
-};
-
-UENUM(BlueprintType)
-enum class EDeliveryStopReasonV3 : uint8
-{
-	Manual,
-	DurationElapsed,
-	OnFirstHit,
-	OnEvent,
-	OwnerDestroyed,
-	SpellEnded,
-	Expired,
-	Failed
-};
-
-// ============================================================
-// Shapes
-// ============================================================
-
-UENUM(BlueprintType)
-enum class EDeliveryShapeV3 : uint8
-{
-	Sphere,
-	Box,
-	Capsule,
-	Ray
-};
 
 USTRUCT(BlueprintType)
 struct FDeliveryShapeV3
@@ -98,29 +106,14 @@ struct FDeliveryShapeV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
 	EDeliveryShapeV3 Kind = EDeliveryShapeV3::Sphere;
 
-	// Sphere/Capsule
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
-	float Radius = 30.f;
+	float Radius = 25.f;
 
-	// Capsule
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
-	float HalfHeight = 60.f;
+	FVector Extents = FVector(25.f, 25.f, 25.f);
 
-	// Box
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
-	FVector Extents = FVector(30.f, 30.f, 30.f);
-};
-
-// ============================================================
-// Query policy
-// ============================================================
-
-UENUM(BlueprintType)
-enum class EDeliveryQueryModeV3 : uint8
-{
-	Overlap,
-	Sweep,
-	LineTrace
+	float HalfHeight = 50.f;
 };
 
 USTRUCT(BlueprintType)
@@ -129,7 +122,7 @@ struct FDeliveryQueryPolicyV3
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
-	EDeliveryQueryModeV3 Mode = EDeliveryQueryModeV3::LineTrace;
+	EDeliveryQueryModeV3 Mode = EDeliveryQueryModeV3::Sweep;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
 	FName CollisionProfile = NAME_None;
@@ -139,36 +132,8 @@ struct FDeliveryQueryPolicyV3
 };
 
 // ============================================================
-// Stop policy (data-only; enforcement can be done by driver or group)
+// Attach
 // ============================================================
-
-USTRUCT(BlueprintType)
-struct FDeliveryStopPolicyV3
-{
-	GENERATED_BODY()
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop")
-	bool bStopOnFirstHit = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop")
-	float MaxDurationSeconds = 0.f; // 0 = unlimited
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop")
-	int32 MaxHits = 0; // 0 = unlimited
-};
-
-// ============================================================
-// Attach (group root space)
-// ============================================================
-
-UENUM(BlueprintType)
-enum class EDeliveryAttachModeV3 : uint8
-{
-	World,
-	Caster,
-	CasterSocket,
-	TargetActor // (future: target set)
-};
 
 USTRUCT(BlueprintType)
 struct FDeliveryAttachV3
@@ -178,13 +143,15 @@ struct FDeliveryAttachV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	EDeliveryAttachModeV3 Mode = EDeliveryAttachModeV3::Caster;
 
+	// For CasterSocket mode
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	FName SocketName = NAME_None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
-	FTransform LocalOffset = FTransform::Identity;
-
-	// Optional: for TargetActor mode
+	// For TargetActor mode
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	TWeakObjectPtr<AActor> TargetActor;
+
+	// Local offset relative to chosen base
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
+	FTransform LocalOffset = FTransform::Identity;
 };

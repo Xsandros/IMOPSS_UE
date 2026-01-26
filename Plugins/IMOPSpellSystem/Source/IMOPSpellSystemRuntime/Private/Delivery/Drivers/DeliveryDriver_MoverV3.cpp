@@ -3,7 +3,6 @@
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
 
-#include "Actions/SpellActionExecutorV3.h"
 #include "Stores/SpellTargetStoreV3.h"
 #include "Targeting/TargetingTypesV3.h"
 
@@ -26,34 +25,62 @@ FName UDeliveryDriver_MoverV3::ResolveOutTargetSetName(const UDeliveryGroupRunti
 	return NAME_None;
 }
 
-bool UDeliveryDriver_MoverV3::TryResolveHomingTargetLocation(const FSpellExecContextV3& Ctx, const FDeliveryMoverConfigV3& MoverCfg, FVector& OutTargetLoc) const
+void UDeliveryDriver_MoverV3::SortHitsDeterministic(TArray<FHitResult>& Hits, const FVector& From)
 {
-	if (MoverCfg.Motion != EMoverMotionKindV3::Homing || MoverCfg.HomingTargetSet == NAME_None)
+	Hits.Sort([&](const FHitResult& A, const FHitResult& B)
+	{
+		const float DA = FVector::DistSquared(From, A.ImpactPoint);
+		const float DB = FVector::DistSquared(From, B.ImpactPoint);
+		if (DA != DB) return DA < DB;
+
+		const FName NA = A.GetActor() ? A.GetActor()->GetFName() : NAME_None;
+		const FName NB = B.GetActor() ? B.GetActor()->GetFName() : NAME_None;
+		return NA.LexicalLess(NB);
+	});
+}
+
+FCollisionShape UDeliveryDriver_MoverV3::MakeCollisionShape(const FDeliveryShapeV3& Shape)
+{
+	switch (Shape.Kind)
+	{
+		case EDeliveryShapeV3::Sphere:  return FCollisionShape::MakeSphere(FMath::Max(0.f, Shape.Radius));
+		case EDeliveryShapeV3::Capsule: return FCollisionShape::MakeCapsule(FMath::Max(0.f, Shape.Radius), FMath::Max(0.f, Shape.HalfHeight));
+		case EDeliveryShapeV3::Box:     return FCollisionShape::MakeBox(Shape.Extents);
+		case EDeliveryShapeV3::Ray:
+		default:
+			// Ray => line trace (handled elsewhere); provide a tiny sphere for safety if needed
+			return FCollisionShape::MakeSphere(0.f);
+	}
+}
+
+FQuat UDeliveryDriver_MoverV3::RotationForSweep(const FDeliveryShapeV3& Shape, const FTransform& Pose)
+{
+	// For capsule/box rotation matters; for sphere it doesn't.
+	return Pose.GetRotation();
+}
+
+bool UDeliveryDriver_MoverV3::GetHomingTargetLocation(const FSpellExecContextV3& Ctx, const FDeliveryMoverConfigV3& M, FVector& OutLoc) const
+{
+	if (M.HomingTargetSet == NAME_None)
 	{
 		return false;
 	}
 
-	USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get());
-	if (!Store)
+	if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
 	{
-		return false;
+		if (const FTargetSetV3* TS = Store->Get(M.HomingTargetSet))
+		{
+			for (const FTargetRefV3& R : TS->Targets)
+			{
+				if (AActor* A = R.Actor.Get())
+				{
+					OutLoc = A->GetActorLocation();
+					return true;
+				}
+			}
+		}
 	}
-
-	const FTargetSetV3* TS = Store->Find(MoverCfg.HomingTargetSet);
-	if (!TS || TS->Targets.Num() == 0)
-	{
-		return false;
-	}
-
-	const FTargetRefV3& R = TS->Targets[0];
-	AActor* A = R.Actor.Get();
-	if (!A)
-	{
-		return false;
-	}
-
-	OutTargetLoc = A->GetActorLocation();
-	return true;
+	return false;
 }
 
 void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
@@ -67,220 +94,37 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGro
 	UWorld* World = Ctx.GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogIMOPDeliveryMoverV3, Error, TEXT("Mover Start failed: World is null"));
+		UE_LOG(LogIMOPDeliveryMoverV3, Error, TEXT("Mover Start failed: World null"));
 		Stop(Ctx, Group, EDeliveryStopReasonV3::Failed);
 		return;
 	}
 
-	// Initialize pos/vel from spawn pose
-	PosWS = PrimitiveCtx.FinalPoseWS.GetLocation();
+	// Initial state from pose
+	PositionWS = PrimitiveCtx.FinalPoseWS.GetLocation();
+	TraveledDistance = 0.f;
+	PierceHits = 0;
 
 	const FVector Fwd = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
 	const float Speed = FMath::Max(0.f, PrimitiveCtx.Spec.Mover.Speed);
-	VelWS = Fwd * Speed;
 
-	DistanceTraveled = 0.f;
-	PierceCount = 0;
+	VelocityWS = Fwd * Speed;
 
-	NextSimTimeSeconds = World->GetTimeSeconds(); // immediate
+	NextSimTimeSeconds = World->GetTimeSeconds();
 
-	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover started: %s/%s pos=%s speed=%.1f"),
+	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover started: %s/%s"),
 		*GroupHandle.DeliveryId.ToString(),
-		*PrimitiveId.ToString(),
-		*PosWS.ToString(),
-		Speed);
+		*PrimitiveId.ToString());
 }
 
-void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds)
+bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
+	const FSpellExecContextV3& Ctx,
+	UWorld* World,
+	const FDeliveryPrimitiveSpecV3& Spec,
+	const FVector& From,
+	const FVector& To,
+	TArray<FHitResult>& OutHits) const
 {
-	if (!bActive)
-	{
-		return;
-	}
-
-	UWorld* World = Ctx.GetWorld();
-	if (!World || !Group)
-	{
-		return;
-	}
-
-	// Use live ctx for config updates (rig updates don't affect projectile after spawn, but config may)
-	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
-	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
-	const FDeliveryMoverConfigV3& M = PCtx.Spec.Mover;
-
-	const float Now = World->GetTimeSeconds();
-	const float Interval = FMath::Max(0.f, M.TickInterval);
-
-	if (Interval > 0.f && Now < NextSimTimeSeconds)
-	{
-		return;
-	}
-
-	// Stable schedule
-	NextSimTimeSeconds = (Interval > 0.f) ? (Now + Interval) : Now;
-
-	const float StepDt = (Interval > 0.f) ? Interval : DeltaSeconds;
-
-	StepSim(Ctx, Group, StepDt);
-
-	// Max distance stop
-	if (M.MaxDistance > 0.f && DistanceTraveled >= M.MaxDistance)
-	{
-		Stop(Ctx, Group, EDeliveryStopReasonV3::Expired);
-	}
-}
-
-bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float StepDt)
-{
-	if (!bActive || StepDt <= 0.f)
-	{
-		return false;
-	}
-
-	UWorld* World = Ctx.GetWorld();
-	if (!World)
-	{
-		return false;
-	}
-
-	// Pull config from live ctx
-	const FDeliveryContextV3* LiveCtx = Group ? Group->PrimitiveCtxById.Find(PrimitiveId) : nullptr;
-	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
-	const FDeliveryMoverConfigV3& M = PCtx.Spec.Mover;
-
-	// Homing adjust
-	if (M.Motion == EMoverMotionKindV3::Homing)
-	{
-		FVector TargetLoc;
-		if (TryResolveHomingTargetLocation(Ctx, M, TargetLoc))
-		{
-			const FVector ToTarget = (TargetLoc - PosWS).GetSafeNormal();
-			const float Strength = FMath::Max(0.f, M.HomingStrength);
-
-			// Simple deterministic blend (no physics)
-			const FVector DesiredVel = ToTarget * FMath::Max(0.f, M.Speed);
-			VelWS = FMath::Lerp(VelWS, DesiredVel, FMath::Clamp(Strength * StepDt, 0.f, 1.f));
-		}
-	}
-
-	// Gravity (ballistic)
-	if (M.Motion == EMoverMotionKindV3::Ballistic && M.GravityScale != 0.f)
-	{
-		const FVector G = FVector(0,0, World->GetGravityZ()) * M.GravityScale;
-		VelWS += G * StepDt;
-	}
-
-	const FVector From = PosWS;
-	const FVector To = PosWS + VelWS * StepDt;
-
-	// Debug cfg
-	const FDeliveryDebugDrawConfigV3 DebugCfg =
-		(PCtx.Spec.bOverrideDebugDraw ? PCtx.Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
-
-	if (DebugCfg.bEnable && DebugCfg.bDrawPath)
-	{
-		DebugDrawStep(World, DebugCfg, From, To);
-	}
-
-	// Hit test (sweep along segment)
-	TArray<FHitResult> Hits;
-	const bool bHitAny = DoSweepHit(Ctx, Group, From, To, Hits);
-
-	if (!bHitAny)
-	{
-		PosWS = To;
-		DistanceTraveled += FVector::Dist(From, To);
-		return false;
-	}
-
-	// Sort by distance
-	Hits.Sort([&](const FHitResult& A, const FHitResult& B)
-	{
-		return A.Distance < B.Distance;
-	});
-
-	// Handle hits
-	const bool bStopOnHit = M.bStopOnHit;
-	const bool bPierce = M.bPierce;
-	const int32 MaxPierce = FMath::Max(0, M.MaxPierceHits);
-
-	// Optional: write first hit target set
-	const FName OutSetName = ResolveOutTargetSetName(Group, PCtx);
-
-	if (DebugCfg.bEnable && DebugCfg.bDrawHits)
-	{
-		for (const FHitResult& H : Hits)
-		{
-			DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, DebugCfg.Duration);
-			DrawDebugLine(World, H.ImpactPoint, H.ImpactPoint + H.ImpactNormal * 35.f, FColor::Yellow, false, DebugCfg.Duration, 0, 1.2f);
-		}
-	}
-
-	if (OutSetName != NAME_None)
-	{
-		USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get());
-		if (Store)
-		{
-			FTargetSetV3 Out;
-			for (const FHitResult& H : Hits)
-			{
-				if (AActor* A = H.GetActor())
-				{
-					FTargetRefV3 R;
-					R.Actor = A;
-					Out.AddUnique(R);
-				}
-			}
-			Store->Set(OutSetName, Out);
-		}
-	}
-
-	// Move to first impact point
-	const FHitResult& First = Hits[0];
-	PosWS = First.ImpactPoint;
-	DistanceTraveled += FVector::Dist(From, PosWS);
-
-	// Decide stop/pierce
-	if (bPierce)
-	{
-		PierceCount++;
-		if (MaxPierce > 0 && PierceCount > MaxPierce)
-		{
-			Stop(Ctx, Group, EDeliveryStopReasonV3::OnFirstHit);
-			return true;
-		}
-
-		// Continue after pierce: keep velocity, but nudge forward a bit to avoid re-hitting same surface.
-		PosWS += VelWS.GetSafeNormal() * 2.f;
-		return true;
-	}
-
-	if (bStopOnHit)
-	{
-		Stop(Ctx, Group, EDeliveryStopReasonV3::OnFirstHit);
-		return true;
-	}
-
-	// Otherwise continue (rare config)
-	PosWS = To;
-	DistanceTraveled += FVector::Dist(First.ImpactPoint, To);
-	return true;
-}
-
-bool UDeliveryDriver_MoverV3::DoSweepHit(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FVector& From, const FVector& To, TArray<FHitResult>& OutHits) const
-{
-	UWorld* World = Ctx.GetWorld();
-	if (!World || !Group)
-	{
-		return false;
-	}
-
-	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
-	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
-
-	const FDeliveryPrimitiveSpecV3& Spec = PCtx.Spec;
-	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("Visibility");
+	OutHits.Reset();
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Mover), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)
@@ -291,33 +135,249 @@ bool UDeliveryDriver_MoverV3::DoSweepHit(const FSpellExecContextV3& Ctx, UDelive
 		}
 	}
 
-	// Use shape kind as sweep volume (Ray -> line trace)
-	if (Spec.Shape.Kind == EDeliveryShapeV3::Ray)
+	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("Visibility");
+
+	// Ray = line trace, else sweep with shape (or overlap if asked)
+	if (Spec.Shape.Kind == EDeliveryShapeV3::Ray || Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace)
 	{
 		return World->LineTraceMultiByProfile(OutHits, From, To, Profile, Params);
 	}
 
-	FCollisionShape CS;
-	switch (Spec.Shape.Kind)
+	const FCollisionShape CS = MakeCollisionShape(Spec.Shape);
+	const FQuat Rot = FQuat::Identity; // for mover, using identity is OK unless you want oriented box/capsule; keep simple & stable
+
+	if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
 	{
-		case EDeliveryShapeV3::Sphere:   CS = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius)); break;
-		case EDeliveryShapeV3::Capsule:  CS = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight)); break;
-		case EDeliveryShapeV3::Box:      CS = FCollisionShape::MakeBox(Spec.Shape.Extents); break;
-		default:                         CS = FCollisionShape::MakeSphere(0.f); break;
+		return World->OverlapMultiByProfile(OutHits, To, Rot, Profile, CS, Params);
 	}
 
-	return World->SweepMultiByProfile(OutHits, From, To, FQuat::Identity, Profile, CS, Params);
+	return World->SweepMultiByProfile(OutHits, From, To, Rot, Profile, CS, Params);
 }
 
-void UDeliveryDriver_MoverV3::DebugDrawStep(UWorld* World, const FDeliveryDebugDrawConfigV3& DebugCfg, const FVector& From, const FVector& To) const
+void UDeliveryDriver_MoverV3::DebugDraw(const FSpellExecContextV3& Ctx, const UDeliveryGroupRuntimeV3* Group, const FDeliveryPrimitiveSpecV3& Spec, const FVector& From, const FVector& To, const TArray<FHitResult>& Hits) const
 {
+	UWorld* World = Ctx.GetWorld();
+	if (!World || !Group)
+	{
+		return;
+	}
+
+	const FDeliveryDebugDrawConfigV3 DebugCfg =
+		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+
+	if (!DebugCfg.bEnable)
+	{
+		return;
+	}
+
+	const float Dur = DebugCfg.Duration;
+
+	if (DebugCfg.bDrawPath)
+	{
+		DrawDebugLine(World, From, To, FColor::Yellow, false, Dur, 0, 2.0f);
+	}
+
+	if (DebugCfg.bDrawShape)
+	{
+		switch (Spec.Shape.Kind)
+		{
+			case EDeliveryShapeV3::Sphere:
+				DrawDebugSphere(World, To, Spec.Shape.Radius, 12, FColor::Green, false, Dur, 0, 1.0f);
+				break;
+			case EDeliveryShapeV3::Capsule:
+				DrawDebugCapsule(World, To, Spec.Shape.HalfHeight, Spec.Shape.Radius, FQuat::Identity, FColor::Green, false, Dur, 0, 1.0f);
+				break;
+			case EDeliveryShapeV3::Box:
+				DrawDebugBox(World, To, Spec.Shape.Extents, FQuat::Identity, FColor::Green, false, Dur, 0, 1.0f);
+				break;
+			default:
+				break;
+		}
+	}
+
+	if (DebugCfg.bDrawHits)
+	{
+		for (const FHitResult& H : Hits)
+		{
+			DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, Dur);
+		}
+	}
+}
+
+void UDeliveryDriver_MoverV3::WriteHitsToTargetStore(const FSpellExecContextV3& Ctx, const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx, const TArray<FHitResult>& Hits) const
+{
+	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
+	if (OutSetName == NAME_None)
+	{
+		return;
+	}
+
+	if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
+	{
+		FTargetSetV3 Out;
+		for (const FHitResult& H : Hits)
+		{
+			if (AActor* A = H.GetActor())
+			{
+				FTargetRefV3 R;
+				R.Actor = A;
+				Out.AddUnique(R);
+			}
+		}
+		Store->Set(OutSetName, Out);
+	}
+}
+
+bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float StepSeconds)
+{
+	if (!Group)
+	{
+		return false;
+	}
+
+	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
+	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
+
+	const FDeliveryPrimitiveSpecV3& Spec = PCtx.Spec;
+	const FDeliveryMoverConfigV3& M = Spec.Mover;
+
+	// Max distance
+	if (M.MaxDistance > 0.f && TraveledDistance >= M.MaxDistance)
+	{
+		Stop(Ctx, Group, EDeliveryStopReasonV3::Expired);
+		return false;
+	}
+
+	// Update velocity by motion kind
+	switch (M.Motion)
+	{
+		case EMoverMotionKindV3::Homing:
+		{
+			FVector TargetLoc;
+			if (GetHomingTargetLocation(Ctx, M, TargetLoc))
+			{
+				const FVector DesiredDir = (TargetLoc - PositionWS).GetSafeNormal();
+				const FVector CurrentDir = VelocityWS.IsNearlyZero() ? DesiredDir : VelocityWS.GetSafeNormal();
+
+				// Simple deterministic blend
+				const float Strength = FMath::Clamp(M.HomingStrength, 0.f, 1000.f);
+				const float Alpha = FMath::Clamp(Strength * StepSeconds, 0.f, 1.f);
+
+				const FVector NewDir = FMath::Lerp(CurrentDir, DesiredDir, Alpha).GetSafeNormal();
+				VelocityWS = NewDir * FMath::Max(0.f, M.Speed);
+			}
+			// else keep current velocity
+			break;
+		}
+
+		case EMoverMotionKindV3::Ballistic:
+		{
+			// Apply gravity on Z
+			const float G = -980.f * FMath::Max(0.f, M.GravityScale);
+			VelocityWS.Z += G * StepSeconds;
+			break;
+		}
+
+		case EMoverMotionKindV3::Straight:
+		default:
+			// Keep constant velocity
+			break;
+	}
+
+	const FVector From = PositionWS;
+	const FVector To = PositionWS + VelocityWS * StepSeconds;
+
+	// Sweep
+	TArray<FHitResult> Hits;
+	const bool bAny = SweepMoveAndCollectHits(Ctx, Ctx.GetWorld(), Spec, From, To, Hits);
+
+	if (bAny)
+	{
+		SortHitsDeterministic(Hits, From);
+		WriteHitsToTargetStore(Ctx, Group, PCtx, Hits);
+		DebugDraw(Ctx, Group, Spec, From, To, Hits);
+
+		// Hit handling
+		if (M.bPierce)
+		{
+			PierceHits += Hits.Num();
+
+			const int32 MaxPierce = M.MaxPierceHits;
+			if (MaxPierce > 0 && PierceHits >= MaxPierce)
+			{
+				// stop at first blocking hit point for determinism
+				PositionWS = Hits[0].ImpactPoint;
+				Stop(Ctx, Group, EDeliveryStopReasonV3::OnFirstHit);
+				return false;
+			}
+
+			// Continue moving through (no penetration resolution yet)
+			PositionWS = To;
+		}
+		else
+		{
+			// Stop or continue depending on config
+			if (M.bStopOnHit)
+			{
+				PositionWS = Hits[0].ImpactPoint;
+				Stop(Ctx, Group, EDeliveryStopReasonV3::OnFirstHit);
+				return false;
+			}
+
+			PositionWS = To;
+		}
+	}
+	else
+	{
+		DebugDraw(Ctx, Group, Spec, From, To, Hits);
+		PositionWS = To;
+	}
+
+	TraveledDistance += FVector::Distance(From, PositionWS);
+
+	// Update group primitive ctx FinalPoseWS so other systems can read it
+	if (LiveCtx)
+	{
+		FDeliveryContextV3& Mut = Group->PrimitiveCtxById.FindChecked(PrimitiveId);
+		Mut.FinalPoseWS = FTransform(Mut.FinalPoseWS.GetRotation(), PositionWS, Mut.FinalPoseWS.GetScale3D());
+	}
+
+	return true;
+}
+
+void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds)
+{
+	if (!bActive || !Group)
+	{
+		return;
+	}
+
+	UWorld* World = Ctx.GetWorld();
 	if (!World)
 	{
 		return;
 	}
 
-	DrawDebugLine(World, From, To, FColor::Purple, false, DebugCfg.Duration, 0, 2.0f);
-	DrawDebugPoint(World, To, 8.f, FColor::Purple, false, DebugCfg.Duration);
+	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
+	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
+
+	const float Now = World->GetTimeSeconds();
+	const float Interval = FMath::Max(0.f, PCtx.Spec.Mover.TickInterval);
+
+	if (Interval > 0.f)
+	{
+		if (Now < NextSimTimeSeconds)
+		{
+			return;
+		}
+		NextSimTimeSeconds = Now + Interval;
+		StepSim(Ctx, Group, Interval);
+	}
+	else
+	{
+		// every tick with DeltaSeconds
+		StepSim(Ctx, Group, FMath::Max(0.f, DeltaSeconds));
+	}
 }
 
 void UDeliveryDriver_MoverV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason)
@@ -329,11 +389,11 @@ void UDeliveryDriver_MoverV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGrou
 
 	bActive = false;
 
-	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover stopped: %s/%s inst=%d reason=%d pos=%s dist=%.1f"),
+	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover stopped: %s/%s inst=%d reason=%d traveled=%.1f pierce=%d"),
 		*GroupHandle.DeliveryId.ToString(),
 		*PrimitiveId.ToString(),
 		GroupHandle.InstanceIndex,
 		(int32)Reason,
-		*PosWS.ToString(),
-		DistanceTraveled);
+		TraveledDistance,
+		PierceHits);
 }

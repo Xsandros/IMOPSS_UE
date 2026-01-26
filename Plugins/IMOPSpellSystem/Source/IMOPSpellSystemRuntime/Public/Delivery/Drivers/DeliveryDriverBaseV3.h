@@ -8,18 +8,20 @@
 
 #include "DeliveryDriverBaseV3.generated.h"
 
-class UDeliveryGroupRuntimeV3;
 struct FSpellExecContextV3;
+class UDeliveryGroupRuntimeV3;
 
 /**
- * Base class for Delivery drivers.
+ * Base class for all Delivery drivers (Composite-first).
  *
- * Composite-first:
- * - One GroupRuntime per StartDelivery.
- * - One Driver per PrimitiveId inside that group.
+ * Lifecycle:
+ * - Start(Ctx, Group, PrimitiveCtx)
+ * - Tick(Ctx, Group, DeltaSeconds)  (optional)
+ * - Stop(Ctx, Group, Reason)
  *
- * Drivers are pure logic (no actors required), deterministic on server.
- * Rendering/VFX will be handled later (Phase 12) via Presentation hooks in specs.
+ * Notes:
+ * - Drivers are owned by DeliverySubsystemV3 / GroupRuntime and are server-authoritative.
+ * - Drivers keep minimal state + can read/write Group->Blackboard and Group->PrimitiveCtxById.
  */
 UCLASS(Abstract)
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriverBaseV3 : public UObject
@@ -27,7 +29,7 @@ class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriverBaseV3 : public UObject
 	GENERATED_BODY()
 
 public:
-	// Identity (set by subsystem)
+	// Set by subsystem before Start()
 	UPROPERTY()
 	FDeliveryHandleV3 GroupHandle;
 
@@ -38,9 +40,9 @@ public:
 	bool bActive = false;
 
 public:
-	virtual void Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) {}
+	virtual void Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) PURE_VIRTUAL(UDeliveryDriverBaseV3::Start, );
 	virtual void Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds) {}
-	virtual void Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason) {}
+	virtual void Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason) PURE_VIRTUAL(UDeliveryDriverBaseV3::Stop, );
 
 	bool IsActive() const { return bActive; }
 };

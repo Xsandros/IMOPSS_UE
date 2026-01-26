@@ -3,9 +3,9 @@
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
 
-#include "Actions/SpellActionExecutorV3.h" // FSpellExecContextV3 helpers
 #include "Stores/SpellTargetStoreV3.h"
 #include "Targeting/TargetingTypesV3.h"
+#include "Stores/SpellTargetStoreV3.h"
 
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -32,45 +32,12 @@ void UDeliveryDriver_BeamV3::SortHitsDeterministic(TArray<FHitResult>& Hits, con
 	{
 		const float DA = FVector::DistSquared(From, A.ImpactPoint);
 		const float DB = FVector::DistSquared(From, B.ImpactPoint);
-		if (DA != DB)
-		{
-			return DA < DB;
-		}
+		if (DA != DB) return DA < DB;
+
 		const FName NA = A.GetActor() ? A.GetActor()->GetFName() : NAME_None;
 		const FName NB = B.GetActor() ? B.GetActor()->GetFName() : NAME_None;
 		return NA.LexicalLess(NB);
 	});
-}
-
-bool UDeliveryDriver_BeamV3::TryResolveLockTargetLocation(const FSpellExecContextV3& Ctx, const FDeliveryBeamConfigV3& BeamCfg, FVector& OutTargetLoc) const
-{
-	if (!BeamCfg.bLockOnTarget || BeamCfg.LockTargetSet == NAME_None)
-	{
-		return false;
-	}
-
-	USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get());
-	if (!Store)
-	{
-		return false;
-	}
-
-	const FTargetSetV3* TS = Store->Find(BeamCfg.LockTargetSet);
-	if (!TS || TS->Targets.Num() == 0)
-	{
-		return false;
-	}
-
-	// Deterministic: pick first target (store should already be deterministic)
-	const FTargetRefV3& R = TS->Targets[0];
-	AActor* A = R.Actor.Get();
-	if (!A)
-	{
-		return false;
-	}
-
-	OutTargetLoc = A->GetActorLocation();
-	return true;
 }
 
 void UDeliveryDriver_BeamV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
@@ -84,36 +51,70 @@ void UDeliveryDriver_BeamV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGrou
 	UWorld* World = Ctx.GetWorld();
 	if (!World)
 	{
-		UE_LOG(LogIMOPDeliveryBeamV3, Error, TEXT("Beam Start failed: World is null"));
+		UE_LOG(LogIMOPDeliveryBeamV3, Error, TEXT("Beam Start failed: World null"));
 		Stop(Ctx, Group, EDeliveryStopReasonV3::Failed);
 		return;
 	}
 
-	// Schedule first eval immediately
 	NextEvalTimeSeconds = World->GetTimeSeconds();
-
-	// Optional immediate eval
-	EvaluateOnce(Ctx, Group, PrimitiveCtx);
 
 	UE_LOG(LogIMOPDeliveryBeamV3, Log, TEXT("Beam started: %s/%s"),
 		*GroupHandle.DeliveryId.ToString(),
 		*PrimitiveId.ToString());
 }
 
+bool UDeliveryDriver_BeamV3::ComputeBeamEndpoints(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx, FVector& OutFrom, FVector& OutTo) const
+{
+	const FDeliveryPrimitiveSpecV3& Spec = PrimitiveCtx.Spec;
+	const FDeliveryBeamConfigV3& B = Spec.Beam;
+
+	OutFrom = PrimitiveCtx.FinalPoseWS.GetLocation();
+
+	// Default direction: forward from pose
+	FVector Dir = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
+	float Range = FMath::Max(0.f, B.Range);
+
+	// Optional lock-on: use first actor in LockTargetSet if present
+	if (B.bLockOnTarget && B.LockTargetSet != NAME_None)
+	{
+		if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
+		{
+			if (const FTargetSetV3* TS = Store->Get(B.LockTargetSet))
+			{
+				for (const FTargetRefV3& R : TS->Targets)
+				{
+					if (AActor* A = R.Actor.Get())
+					{
+						const FVector ToActor = (A->GetActorLocation() - OutFrom);
+						if (!ToActor.IsNearlyZero())
+						{
+							Dir = ToActor.GetSafeNormal();
+						}
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	OutTo = OutFrom + Dir * Range;
+	return true;
+}
+
 void UDeliveryDriver_BeamV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds)
 {
-	if (!bActive)
+	if (!bActive || !Group)
 	{
 		return;
 	}
 
 	UWorld* World = Ctx.GetWorld();
-	if (!World || !Group)
+	if (!World)
 	{
 		return;
 	}
 
-	// Use live ctx (rig updates)
+	// Live ctx (after rig updates)
 	const FDeliveryContextV3* LiveCtx = Group->PrimitiveCtxById.Find(PrimitiveId);
 	const FDeliveryContextV3& PCtx = LiveCtx ? *LiveCtx : LocalCtx;
 
@@ -139,20 +140,10 @@ bool UDeliveryDriver_BeamV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliv
 	}
 
 	const FDeliveryPrimitiveSpecV3& Spec = PrimitiveCtx.Spec;
-	const FDeliveryBeamConfigV3& BeamCfg = Spec.Beam;
+	const FDeliveryBeamConfigV3& B = Spec.Beam;
 
-	const FVector From = PrimitiveCtx.FinalPoseWS.GetLocation();
-
-	// Aim direction:
-	FVector Dir = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
-	FVector LockLoc;
-	if (TryResolveLockTargetLocation(Ctx, BeamCfg, LockLoc))
-	{
-		Dir = (LockLoc - From).GetSafeNormal();
-	}
-
-	const float Range = FMath::Max(0.f, BeamCfg.Range);
-	const FVector To = From + Dir * Range;
+	FVector From, To;
+	ComputeBeamEndpoints(Ctx, Group, PrimitiveCtx, From, To);
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Beam), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)
@@ -168,14 +159,24 @@ bool UDeliveryDriver_BeamV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliv
 	TArray<FHitResult> Hits;
 	bool bAny = false;
 
-	const float Radius = FMath::Max(0.f, BeamCfg.Radius);
-	if (Radius <= 0.f)
+	const float Radius = FMath::Max(0.f, B.Radius);
+
+	if (Radius <= KINDA_SMALL_NUMBER)
 	{
-		bAny = World->LineTraceMultiByProfile(Hits, From, To, Profile, Params);
+		// Line trace (single/multi depends on query mode)
+		if (Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace || Spec.Shape.Kind == EDeliveryShapeV3::Ray)
+		{
+			bAny = World->LineTraceMultiByProfile(Hits, From, To, Profile, Params);
+		}
+		else
+		{
+			// Still do a line trace for beams unless explicitly wanting overlap.
+			bAny = World->LineTraceMultiByProfile(Hits, From, To, Profile, Params);
+		}
 	}
 	else
 	{
-		const FCollisionShape CS = FCollisionShape::MakeSphere(Radius);
+		FCollisionShape CS = FCollisionShape::MakeSphere(Radius);
 		bAny = World->SweepMultiByProfile(Hits, From, To, FQuat::Identity, Profile, CS, Params);
 	}
 
@@ -184,7 +185,7 @@ bool UDeliveryDriver_BeamV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliv
 		SortHitsDeterministic(Hits, From);
 	}
 
-	// Debug draw
+	// Debug
 	const FDeliveryDebugDrawConfigV3 DebugCfg =
 		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 
@@ -195,59 +196,39 @@ bool UDeliveryDriver_BeamV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliv
 		if (DebugCfg.bDrawPath)
 		{
 			DrawDebugLine(World, From, To, FColor::Blue, false, Dur, 0, 2.0f);
-			DrawDebugDirectionalArrow(World, From, From + Dir * 120.f, 25.f, FColor::Blue, false, Dur, 0, 2.0f);
 		}
 
 		if (DebugCfg.bDrawHits)
 		{
-			const int32 MaxDraw = FMath::Min(32, Hits.Num());
-			for (int32 i = 0; i < MaxDraw; ++i)
+			for (const FHitResult& H : Hits)
 			{
-				const FHitResult& H = Hits[i];
 				DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, Dur);
-				DrawDebugLine(World, H.ImpactPoint, H.ImpactPoint + H.ImpactNormal * 35.f, FColor::Yellow, false, Dur, 0, 1.2f);
 			}
-		}
-
-		// Visualize beam radius
-		if (Radius > 0.f && DebugCfg.bDrawShape)
-		{
-			DrawDebugSphere(World, From, Radius, 12, FColor::Blue, false, Dur, 0, 0.5f);
-			DrawDebugSphere(World, To, Radius, 12, FColor::Blue, false, Dur, 0, 0.5f);
 		}
 	}
 
-	// Optional writeback into TargetStore
+	// Write hits to TargetStore (optional)
 	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
 	if (OutSetName != NAME_None)
 	{
-		USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get());
-		if (Store)
+		if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
 		{
-			FTargetSetV3 OutSet;
-			OutSet.Targets.Reserve(Hits.Num());
-
+			FTargetSetV3 Out;
 			for (const FHitResult& H : Hits)
 			{
-				AActor* A = H.GetActor();
-				if (!A)
+				if (AActor* A = H.GetActor())
 				{
-					continue;
+					FTargetRefV3 R;
+					R.Actor = A;
+					Out.AddUnique(R);
 				}
-				FTargetRefV3 R;
-				R.Actor = A;
-				OutSet.AddUnique(R);
 			}
-
-			Store->Set(OutSetName, OutSet);
+			Store->Set(OutSetName, Out);
 		}
 	}
 
-	UE_LOG(LogIMOPDeliveryBeamV3, Verbose, TEXT("Beam tick: %s/%s hits=%d radius=%.2f"),
-		*GroupHandle.DeliveryId.ToString(),
-		*PrimitiveId.ToString(),
-		Hits.Num(),
-		Radius);
+	// Stop policy: if group/primitive wants stop on first hit, subsystem will stop us via StopByPrimitiveId later.
+	// For now keep beam running.
 
 	return bAny;
 }

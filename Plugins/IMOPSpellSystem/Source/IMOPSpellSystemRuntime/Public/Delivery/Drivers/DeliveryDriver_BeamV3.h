@@ -6,10 +6,13 @@
 
 /**
  * Beam driver (Composite-first):
- * - Periodically traces from PrimitiveCtx.FinalPoseWS forward (or towards lock target).
- * - Uses LineTraceMultiByProfile when Radius == 0, otherwise Sphere SweepMultiByProfile.
- * - Debug draws beam + hits.
- * - Optional: writes current hit list into TargetStore (OutTargetSetName / group default).
+ * - Each tick (or interval) traces forward from PrimitiveCtx.FinalPoseWS.
+ * - Optionally uses a sweep radius (Beam.Radius > 0).
+ * - Optionally locks onto a target set (Beam.bLockOnTarget + LockTargetSet).
+ * - Writes hit targets to TargetStore (OutTargetSetName / group default).
+ * - DrawDebug line + hits.
+ *
+ * Networking: server authoritative; deterministic sorting.
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_BeamV3 : public UDeliveryDriverBaseV3
@@ -33,7 +36,5 @@ private:
 	static void SortHitsDeterministic(TArray<FHitResult>& Hits, const FVector& From);
 
 	bool EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
-
-	// Lock-on aim (optional)
-	bool TryResolveLockTargetLocation(const FSpellExecContextV3& Ctx, const FDeliveryBeamConfigV3& BeamCfg, FVector& OutTargetLoc) const;
+	bool ComputeBeamEndpoints(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx, FVector& OutFrom, FVector& OutTo) const;
 };

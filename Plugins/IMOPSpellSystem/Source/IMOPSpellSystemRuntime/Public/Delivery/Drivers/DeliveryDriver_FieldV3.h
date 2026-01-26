@@ -6,12 +6,10 @@
 
 /**
  * Field driver (Composite-first):
- * - Periodically evaluates an overlap (recommended) at PrimitiveCtx.FinalPoseWS.
- * - Maintains a small membership cache (enter/exit) for future event emission.
- * - DrawDebug only for now.
- * - Optional: writes current membership into TargetStore (OutTargetSetName / group default).
- *
- * NOTE: Stop is explicit (or via subsystem Stop calls). StopPolicy enforcement will come later at group level.
+ * - Periodically evaluates an overlap/sweep volume at PrimitiveCtx.FinalPoseWS.
+ * - Writes current members into TargetStore (OutTargetSetName / group default).
+ * - Optional enter/exit bookkeeping (for later events); currently only logs when enabled.
+ * - Debug draw volume + member points.
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_FieldV3 : public UDeliveryDriverBaseV3
@@ -30,15 +28,13 @@ private:
 	UPROPERTY()
 	float NextEvalTimeSeconds = 0.f;
 
-	// Membership cache (deterministic-ish: server authoritative; stable for game logic)
-	UPROPERTY()
-	TSet<TWeakObjectPtr<AActor>> CurrentMembers;
+	// last evaluated members (raw pointers for speed; lifetime guarded by world checks)
+	TSet<TWeakObjectPtr<AActor>> LastMembers;
 
 private:
 	static FName ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
-	static void SortActorsDeterministic(TArray<AActor*>& Actors);
 
 	bool EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
 
-	bool DoOverlap(UWorld* World, const FVector& Origin, const FQuat& Rot, const struct FDeliveryShapeV3& Shape, FName Profile, const FCollisionQueryParams& Params, TArray<FHitResult>& OutHits) const;
+	static void AddHitActorsUnique(const TArray<FHitResult>& Hits, TArray<TWeakObjectPtr<AActor>>& OutActors);
 };

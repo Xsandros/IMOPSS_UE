@@ -6,10 +6,10 @@
 
 /**
  * InstantQuery driver (Composite-first):
- * - Executes one deterministic query immediately on Start (Overlap/Sweep/LineTrace)
- * - Emits debug draw only (Phase 4 scope)
- * - Writes hits into TargetStore if available (optional, uses OutTargetSetName / group default)
- * - Marks itself inactive after Start (does NOT auto-remove itself from group maps)
+ * - Evaluates once on Start (no Tick needed).
+ * - Uses Ray shape semantics (line trace) by default; if shape is Sphere/Box/Capsule we do sweep.
+ * - Writes hits to TargetStore if OutTargetSetName is set (or group default).
+ * - Debug draw for path + hits.
  */
 UCLASS()
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_InstantQueryV3 : public UDeliveryDriverBaseV3
@@ -18,18 +18,16 @@ class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriver_InstantQueryV3 : public UDelive
 
 public:
 	virtual void Start(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) override;
+	virtual void Tick(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, float DeltaSeconds) override {}
 	virtual void Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason) override;
 
 private:
-	// Snapshot used for Stop logs/debug
 	UPROPERTY()
 	FDeliveryContextV3 LocalCtx;
 
-	// Helpers
-	static void SortHitsDeterministic(TArray<FHitResult>& Hits, const FVector& From);
+private:
 	static FName ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
+	static void SortHitsDeterministic(TArray<FHitResult>& Hits, const FVector& From);
 
-	bool DoOverlapQuery(UWorld* World, const FVector& Origin, const FQuat& Rot, const FDeliveryShapeV3& Shape, const FName& Profile, const FCollisionQueryParams& Params, TArray<FHitResult>& OutHits) const;
-	bool DoSweepQuery(UWorld* World, const FVector& From, const FVector& To, const FQuat& Rot, const FDeliveryShapeV3& Shape, const FName& Profile, const FCollisionQueryParams& Params, TArray<FHitResult>& OutHits) const;
-	bool DoLineTraceQuery(UWorld* World, const FVector& From, const FVector& To, const FName& Profile, const FCollisionQueryParams& Params, TArray<FHitResult>& OutHits) const;
+	bool EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx);
 };

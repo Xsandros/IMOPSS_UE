@@ -1,166 +1,114 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Delivery/DeliveryTypesV3.h"
+#include "UObject/Object.h"
 #include "DeliveryRigNodeV3.generated.h"
 
-UENUM(BlueprintType)
-enum class EDeliveryRigNodeKindV3 : uint8
-{
-	// Produces a base pose from an attachment source
-	Attach,
-
-	// Applies local offset/rotation on parent pose
-	Offset,
-
-	// Reorients rotation (keeps location)
-	AimForward,      // aims forward based on parent + local rotation
-	LookAtTargetSet, // aims at center of a target set
-
-	// Reorients rotation over time (general purpose: scanning, spinning, sweeping)
-	RotateOverTime, // rotation rate * elapsed
-
-	// Produces multiple emitter poses around current pose (does not change root)
-	OrbitSampler,
-
-	// Adds deterministic noise to root and/or emitters
-	Jitter,
-	
-	// Produces multiple emitters in a fan / arc (shotgun, scanning wedge)
-	FanSampler,
-
-// Produces multiple emitters via deterministic scatter inside a volume
-	ScatterSampler
-};
-
-USTRUCT(BlueprintType)
-struct FDeliveryRigNodeV3
+/**
+ * Rig Node base:
+ * Evaluates a LOCAL SPACE transform at time t.
+ *
+ * Determinism rules:
+ * - No random calls here (seeded noise can be implemented later via blackboard-driven inputs)
+ * - Pure function of (TimeSeconds + node parameters)
+ */
+UCLASS(Abstract, BlueprintType, EditInlineNew, DefaultToInstanced)
+class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigNodeV3 : public UObject
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	EDeliveryRigNodeKindV3 Kind = EDeliveryRigNodeKindV3::Attach;
+public:
+	UFUNCTION(BlueprintCallable, BlueprintNativeEvent, Category="Delivery|Rig")
+	FTransform Evaluate(float TimeSeconds) const;
+	virtual FTransform Evaluate_Implementation(float TimeSeconds) const { return FTransform::Identity; }
+};
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	int32 Parent = INDEX_NONE;
+// ============================================================
+// Standard nodes (small, useful, deterministic)
+// ============================================================
 
-	// Common local transform adjustments (used by Offset/AimForward etc.)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FVector LocalOffset = FVector::ZeroVector;
+/** Constant transform */
+UCLASS(BlueprintType, EditInlineNew, DefaultToInstanced)
+class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigNode_StaticPoseV3 : public UDeliveryRigNodeV3
+{
+	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FRotator LocalRotation = FRotator::ZeroRotator;
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	FTransform LocalPose = FTransform::Identity;
 
-	// If true, this node also applies to any already-produced emitters (in addition to root).
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	bool bAffectEmitters = false;
+	virtual FTransform Evaluate_Implementation(float TimeSeconds) const override
+	{
+		return LocalPose;
+	}
+};
 
-	
-	// Attach source
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FDeliveryAttachV3 Attach;
+/**
+ * Sine offset along a local axis.
+ * Output = BasePose * (translation axis * sin(t*Freq + Phase)*Amplitude)
+ */
+UCLASS(BlueprintType, EditInlineNew, DefaultToInstanced)
+class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigNode_SineOffsetV3 : public UDeliveryRigNodeV3
+{
+	GENERATED_BODY()
 
-	// LookAt target set key (uses Attach.TargetSetName if empty)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FName LookAtTargetSet = NAME_None;
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	FTransform BasePose = FTransform::Identity;
 
-	// Orbit sampler params
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	int32 OrbitCount = 0; // 0 = disabled
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	FVector LocalAxis = FVector(0.f, 0.f, 1.f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	float OrbitRadius = 0.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	float Amplitude = 30.f;
 
-	// base phase (degrees)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig") 
-	float OrbitPhaseDegrees = 0.f; 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	float Frequency = 1.f;
 
-	// Time-awareness: additional phase = ElapsedSeconds * OrbitAngularSpeedDegPerSec
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig") 
-	float OrbitAngularSpeedDegPerSec = 0.f;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FVector OrbitAxis = FVector::UpVector; // ring plane normal
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	float Phase = 0.f;
 
-	// If true, OrbitSampler appends its emitters to the current emitter list.
-	// If false, it replaces the current emitters.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	bool bAppendEmitters = true;
-	
-	// Jitter params
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	float JitterRadius = 0.f;
+	virtual FTransform Evaluate_Implementation(float TimeSeconds) const override
+	{
+		const float W = TimeSeconds * Frequency * 2.f * PI + Phase;
+		const float S = FMath::Sin(W);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	float JitterYawDegrees = 0.f;
+		FTransform Offset = FTransform::Identity;
+		Offset.SetLocation(LocalAxis.GetSafeNormal() * (Amplitude * S));
+		return Offset * BasePose;
+	}
+};
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	bool bApplyJitterToRoot = true;
+/**
+ * Spin around local axis (yaw-like rotation by default).
+ * Output = BasePose * Rot(axis, degrees = SpeedDegPerSec * t + OffsetDeg)
+ */
+UCLASS(BlueprintType, EditInlineNew, DefaultToInstanced)
+class IMOPSPELLSYSTEMRUNTIME_API UDeliveryRigNode_SpinV3 : public UDeliveryRigNodeV3
+{
+	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig") 
-	bool bApplyJitterToEmitters = true;
+public:
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	FTransform BasePose = FTransform::Identity;
 
-	// RotateOverTime params (degrees per second)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	FRotator RotationRateDegPerSec = FRotator::ZeroRotator;
-	
-	// Spawn slot used by this node when producing emitters.
-	// DeliverySubsystem can map SpawnSlot -> SlotOverrides[] to vary kind/shape/tags/config per emitter.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	int32 SpawnSlot = 0;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	FVector LocalAxis = FVector(0.f, 0.f, 1.f);
 
-	// If true, orbit emitters will cycle spawn slots: Slot = SpawnSlot + (i % OrbitSlotModulo)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	bool bOrbitSlotByIndex = false;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	float SpeedDegPerSec = 180.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="bOrbitSlotByIndex"))
-	int32 OrbitSlotModulo = 0; // 0 => disabled
-	
-	// ===== Fan sampler params =====
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	int32 FanCount = 0; // 0 => disabled
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Rig")
+	float OffsetDeg = 0.f;
 
-	// Total arc in degrees (centered around forward)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="FanCount>0"))
-	float FanArcDegrees = 30.f;
+	virtual FTransform Evaluate_Implementation(float TimeSeconds) const override
+	{
+		const float Deg = OffsetDeg + SpeedDegPerSec * TimeSeconds;
+		const FVector Axis = LocalAxis.GetSafeNormal();
+		const FQuat Q(Axis, FMath::DegreesToRadians(Deg));
 
-	// Local axis to fan around (default Up = yaw fan)
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="FanCount>0"))
-	FVector FanAxis = FVector::UpVector;
-
-	// Distance from root along each direction
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="FanCount>0"))
-	float FanDistance = 1000.f;
-
-	// Base slot and optional cycling like OrbitSampler
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="FanCount>0"))
-	bool bFanSlotByIndex = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="bFanSlotByIndex"))
-	int32 FanSlotModulo = 0;
-
-	// ===== Scatter sampler params =====
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig")
-	int32 ScatterCount = 0; // 0 => disabled
-
-	// Scatter volume type: sphere if Radius>0, otherwise box if Extents non-zero
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="ScatterCount>0"))
-	float ScatterRadius = 0.f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="ScatterCount>0"))
-	FVector ScatterExtents = FVector::ZeroVector;
-
-	// Optional: randomize yaw for each point
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="ScatterCount>0"))
-	float ScatterYawDegrees = 0.f;
-
-	// Slot cycling
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="ScatterCount>0"))
-	bool bScatterSlotByIndex = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(EditCondition="bScatterSlotByIndex"))
-	int32 ScatterSlotModulo = 0;
-
-
-	
+		FTransform R = FTransform::Identity;
+		R.SetRotation(Q);
+		return R * BasePose;
+	}
 };

@@ -1,99 +1,143 @@
 #include "Events/SpellEventBusSubsystemV3.h"
-#include "Events/SpellEventListenerV3.h"
-#include "Debug/SpellTraceSubsystemV3.h"
 
-#include "Engine/World.h"
+#include "UObject/UObjectBaseUtility.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogIMOPEventBusV3, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogIMOPSpellEventBusV3, Log, All);
 
-FSpellEventSubscriptionHandleV3 USpellEventBusSubsystemV3::Subscribe(UObject* Listener, const FSpellTriggerMatcherV3& Matcher)
+void USpellEventBusSubsystemV3::Initialize(FSubsystemCollectionBase& Collection)
 {
-    FSpellEventSubscriptionHandleV3 Handle;
+	Super::Initialize(Collection);
 
-    if (!Listener)
-    {
-        UE_LOG(LogIMOPEventBusV3, Warning, TEXT("Subscribe failed: Listener is null."));
-        return Handle;
-    }
+	Subscribers.Reset();
+	NextId = 1;
 
-    if (!Listener->GetClass()->ImplementsInterface(USpellEventListenerV3::StaticClass()))
-    {
-        UE_LOG(LogIMOPEventBusV3, Error, TEXT("Subscribe failed: Listener %s does not implement SpellEventListenerV3."),
-            *Listener->GetName());
-        return Handle;
-    }
-
-    FSpellEventBusSubscriberV3 S;
-    S.Id = NextId++;
-    S.Listener = Listener;
-    S.Matcher = Matcher;
-
-    Subscribers.Add(S);
-
-    Handle.Id = S.Id;
-    return Handle;
+	UE_LOG(LogIMOPSpellEventBusV3, Log, TEXT("SpellEventBus initialized"));
 }
 
-bool USpellEventBusSubsystemV3::Unsubscribe(const FSpellEventSubscriptionHandleV3& Handle)
+void USpellEventBusSubsystemV3::Deinitialize()
 {
-    if (!Handle.IsValid())
-    {
-        return false;
-    }
+	Subscribers.Reset();
 
-    const int32 Removed = Subscribers.RemoveAll([&](const FSpellEventBusSubscriberV3& S)
-        {
-            return S.Id == Handle.Id;
-        });
+	UE_LOG(LogIMOPSpellEventBusV3, Log, TEXT("SpellEventBus deinitialized"));
 
-    return Removed > 0;
+	Super::Deinitialize();
+}
+
+bool USpellEventBusSubsystemV3::MatchesFilter(const FGameplayTag& EventTag, const FGameplayTag& FilterTag)
+{
+	if (!FilterTag.IsValid())
+	{
+		return true; // receive all
+	}
+
+	// MatchesTag handles hierarchical tags (e.g. A.B.C matches A or A.B if desired)
+	return EventTag.IsValid() && (EventTag.MatchesTag(FilterTag) || FilterTag.MatchesTag(EventTag));
+}
+
+ISpellEventListenerV3* USpellEventBusSubsystemV3::AsListener(UObject* Obj)
+{
+	if (!Obj)
+	{
+		return nullptr;
+	}
+
+	// Two supported patterns:
+	// 1) Obj is a UObject implementing the UInterface (Blueprint/C++)
+	// 2) Obj is a C++ type where we can cast to ISpellEventListenerV3 via interface address
+	if (Obj->GetClass()->ImplementsInterface(USpellEventListenerV3::StaticClass()))
+	{
+		return Cast<ISpellEventListenerV3>(Obj);
+	}
+
+	// Fallback: try direct cast (works if the type is known in C++)
+	return Cast<ISpellEventListenerV3>(Obj);
+}
+
+FSpellEventSubscriptionHandleV3 USpellEventBusSubsystemV3::Subscribe(UObject* ListenerObj, FGameplayTag TagFilter)
+{
+	FSpellEventSubscriptionHandleV3 Handle;
+
+	if (!ListenerObj)
+	{
+		UE_LOG(LogIMOPSpellEventBusV3, Warning, TEXT("Subscribe rejected: ListenerObj null"));
+		return Handle;
+	}
+
+	if (!AsListener(ListenerObj))
+	{
+		UE_LOG(LogIMOPSpellEventBusV3, Warning, TEXT("Subscribe rejected: ListenerObj does not implement ISpellEventListenerV3 (%s)"),
+			*ListenerObj->GetName());
+		return Handle;
+	}
+
+	FSubscriber S;
+	S.Id = NextId++;
+	S.ListenerObj = ListenerObj;
+	S.TagFilter = TagFilter;
+
+	Subscribers.Add(S);
+
+	Handle.Id = S.Id;
+
+	UE_LOG(LogIMOPSpellEventBusV3, Log, TEXT("Subscribed id=%d obj=%s filter=%s subs=%d"),
+		S.Id,
+		*ListenerObj->GetName(),
+		TagFilter.IsValid() ? *TagFilter.ToString() : TEXT("<ALL>"),
+		Subscribers.Num());
+
+	return Handle;
+}
+
+FSpellEventSubscriptionHandleV3 USpellEventBusSubsystemV3::Subscribe(ISpellEventListenerV3* Listener, FGameplayTag TagFilter)
+{
+	// We need the UObject to store weak pointer.
+	UObject* Obj = Cast<UObject>(Listener);
+	return Subscribe(Obj, TagFilter);
+}
+
+void USpellEventBusSubsystemV3::Unsubscribe(const FSpellEventSubscriptionHandleV3& Handle)
+{
+	if (!Handle.IsValid())
+	{
+		return;
+	}
+
+	const int32 Removed = Subscribers.RemoveAll([&](const FSubscriber& S)
+	{
+		return S.Id == Handle.Id;
+	});
+
+	if (Removed > 0)
+	{
+		UE_LOG(LogIMOPSpellEventBusV3, Log, TEXT("Unsubscribed id=%d (removed=%d) subs=%d"),
+			Handle.Id, Removed, Subscribers.Num());
+	}
 }
 
 void USpellEventBusSubsystemV3::Emit(const FSpellEventV3& Ev)
 {
-    // Always log important emits (independent of Trace subsystem)
-    UE_LOG(LogIMOPEventBusV3, Verbose,
-        TEXT("Emit tag=%s guid=%s sender=%s"),
-        *Ev.EventTag.ToString(),
-        *Ev.RuntimeGuid.ToString(),
-        Ev.Sender ? *Ev.Sender->GetName() : TEXT("None"));
+	// Compact dead subscribers occasionally
+	Subscribers.RemoveAll([](const FSubscriber& S)
+	{
+		return !S.ListenerObj.IsValid();
+	});
 
-    if (UGameInstance* GI = GetGameInstance())
-    {
-        if (USpellTraceSubsystemV3* Trace = GI->GetSubsystem<USpellTraceSubsystemV3>())
-        {
-            Trace->Record(Ev);
-        }
-    }
+	for (const FSubscriber& S : Subscribers)
+	{
+		UObject* Obj = S.ListenerObj.Get();
+		if (!Obj)
+		{
+			continue;
+		}
 
+		if (!MatchesFilter(Ev.EventTag, S.TagFilter))
+		{
+			continue;
+		}
 
-    
-    // Compact dead listeners
-    Subscribers.RemoveAll([](const FSpellEventBusSubscriberV3& S)
-        {
-            return !S.Listener.IsValid();
-        });
-    
-    
-
-    for (const FSpellEventBusSubscriberV3& S : Subscribers)
-    {
-        UObject* L = S.Listener.Get();
-        if (!L) continue;
-
-        if (!S.Matcher.MatchesEvent(Ev))
-        {
-            continue;
-        }
-
-
-        ISpellEventListenerV3* AsListener = Cast<ISpellEventListenerV3>(L);
-        if (!AsListener)
-        {
-            // Should not happen if interface check was true, but be robust
-            continue;
-        }
-
-        AsListener->OnSpellEvent(Ev);
-    }
+		if (ISpellEventListenerV3* L = AsListener(Obj))
+		{
+			L->OnSpellEvent(Ev);
+		}
+	}
 }

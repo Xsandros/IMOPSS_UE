@@ -119,12 +119,19 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 		}
 	}
 
-	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("Visibility");
+	const bool bUseProfile = (Spec.Query.CollisionProfile != NAME_None);
+	const FName Profile = Spec.Query.CollisionProfile; // only valid if bUseProfile
+
 
 	// Ray or LineTrace mode => line trace
 	if (Spec.Shape.Kind == EDeliveryShapeV3::Ray || Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace)
 	{
-		return World->LineTraceMultiByProfile(OutHits, From, To, Profile, Params);
+		if (bUseProfile)
+		{
+			return World->LineTraceMultiByProfile(OutHits, From, To, Profile, Params);
+		}
+		return World->LineTraceMultiByChannel(OutHits, From, To, ECC_Visibility, Params);
+
 	}
 
 	const FCollisionShape CS = MakeCollisionShape(Spec.Shape);
@@ -134,7 +141,23 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 	if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
 	{
 		TArray<FOverlapResult> Overlaps;
-		const bool bAny = World->OverlapMultiByProfile(Overlaps, To, Rot, Profile, CS, Params);
+		bool bAny = false;
+		if (bUseProfile)
+		{
+			bAny = World->OverlapMultiByProfile(Overlaps, To, Rot, Profile, CS, Params);
+		}
+		else
+		{
+			// Overlap uses object types. Use a sane default that matches visibility-style queries:
+			// WorldStatic + WorldDynamic + Pawn is a good baseline.
+			FCollisionObjectQueryParams Obj;
+			Obj.AddObjectTypesToQuery(ECC_WorldStatic);
+			Obj.AddObjectTypesToQuery(ECC_WorldDynamic);
+			Obj.AddObjectTypesToQuery(ECC_Pawn);
+
+			bAny = World->OverlapMultiByObjectType(Overlaps, To, Rot, Obj, CS, Params);
+		}
+
 		if (bAny)
 		{
 			OutHits.Reserve(Overlaps.Num());
@@ -159,7 +182,12 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 		return bAny;
 	}
 
-	return World->SweepMultiByProfile(OutHits, From, To, Rot, Profile, CS, Params);
+	if (bUseProfile)
+	{
+		return World->SweepMultiByProfile(OutHits, From, To, Rot, Profile, CS, Params);
+	}
+	return World->SweepMultiByChannel(OutHits, From, To, Rot, ECC_Visibility, CS, Params);
+
 }
 
 void UDeliveryDriver_MoverV3::DebugDraw(

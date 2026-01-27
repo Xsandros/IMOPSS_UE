@@ -9,7 +9,7 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPExecStopDeliveryV3, Log, All);
 
-static FGuid ResolveRuntimeGuidFromCtx(const FSpellExecContextV3& Ctx)
+static FGuid ResolveRuntimeGuidFromCtx_StopExec(const FSpellExecContextV3& Ctx)
 {
 	if (const USpellRuntimeV3* R = Cast<USpellRuntimeV3>(Ctx.Runtime.Get()))
 	{
@@ -42,7 +42,7 @@ void UExec_StopDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* P
 		return;
 	}
 
-	const FGuid RuntimeGuid = ResolveRuntimeGuidFromCtx(Ctx);
+	const FGuid RuntimeGuid = ResolveRuntimeGuidFromCtx_StopExec(Ctx);
 
 	bool bOk = false;
 

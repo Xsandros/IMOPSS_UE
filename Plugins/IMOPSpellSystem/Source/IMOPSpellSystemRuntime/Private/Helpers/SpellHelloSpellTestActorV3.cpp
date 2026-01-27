@@ -33,12 +33,16 @@ void ASpellHelloSpellTestActorV3::BeginPlay()
     if (!GI) return;
 
     USpellCoreSubsystemV3* Core = GI->GetSubsystem<USpellCoreSubsystemV3>();
-    USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>();
+
+    UWorld* W = GetWorld();
+    USpellEventBusSubsystemV3* Bus = W ? W->GetSubsystem<USpellEventBusSubsystemV3>() : nullptr;
+
     if (!Core || !Bus)
     {
         UE_LOG(LogIMOPHelloSpellV3, Error, TEXT("Missing CoreSubsystem or EventBusSubsystem."));
         return;
     }
+
 
     USpellActionRegistryV3* Registry = Core->GetActionRegistry();
     if (!Registry)

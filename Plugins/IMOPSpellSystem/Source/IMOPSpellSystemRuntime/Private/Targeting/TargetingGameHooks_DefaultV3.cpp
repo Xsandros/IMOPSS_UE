@@ -58,7 +58,7 @@ ETargetRelationV3 UTargetingGameHooks_DefaultV3::GetRelation(const FSpellExecCon
     {
         if (UGameInstance* GI = IMOP_GetGIFromExecCtx(Ctx))
         {
-            if (USpellEventBusSubsystemV3* Bus = GI->GetSubsystem<USpellEventBusSubsystemV3>())
+            if (USpellEventBusSubsystemV3* Bus = World ? World->GetSubsystem<USpellEventBusSubsystemV3>() : nullptr)
             {
                 const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
 

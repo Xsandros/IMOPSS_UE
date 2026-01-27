@@ -1,7 +1,6 @@
 #include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
 
 #include "Delivery/Rig/DeliveryRigV3.h"
-
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Components/SceneComponent.h"
@@ -10,50 +9,52 @@ static FTransform GetAttachBaseWS(UWorld* World, AActor* Caster, const FDelivery
 {
 	switch (Attach.Mode)
 	{
-		case EDeliveryAttachModeV3::World:
-		{
-			// World origin with local offset already applied (authoring uses LocalOffset directly)
-			return Attach.LocalOffset;
-		}
+	case EDeliveryAttachModeV3::World:
+	{
+		// World origin with local offset already applied
+		return Attach.LocalOffset;
+	}
 
-		case EDeliveryAttachModeV3::CasterSocket:
+	case EDeliveryAttachModeV3::CasterSocket:
+	{
+		if (Caster)
 		{
-			if (Caster)
+			if (Attach.SocketName != NAME_None)
 			{
-				if (Attach.SocketName != NAME_None)
+				if (USceneComponent* Root = Caster->GetRootComponent())
 				{
-					if (USceneComponent* Root = Caster->GetRootComponent())
+					if (Root->DoesSocketExist(Attach.SocketName))
 					{
-						if (Root->DoesSocketExist(Attach.SocketName))
-						{
-							const FTransform SocketWS = Root->GetSocketTransform(Attach.SocketName, RTS_World);
-							return Attach.LocalOffset * SocketWS;
-						}
+						const FTransform SocketWS = Root->GetSocketTransform(Attach.SocketName, RTS_World);
+						return Attach.LocalOffset * SocketWS;
 					}
 				}
-				return Attach.LocalOffset * Caster->GetActorTransform();
 			}
-			return Attach.LocalOffset;
-		}
 
-		case EDeliveryAttachModeV3::TargetActor:
-		{
-			if (AActor* Target = Attach.TargetActor.Get())
-			{
-				return Attach.LocalOffset * Target->GetActorTransform();
-			}
-			return Attach.LocalOffset;
+			// Fallback: caster transform
+			return Attach.LocalOffset * Caster->GetActorTransform();
 		}
+		return Attach.LocalOffset;
+	}
 
-		case EDeliveryAttachModeV3::Caster:
-		default:
+	case EDeliveryAttachModeV3::TargetActor:
+	{
+		if (AActor* Target = Attach.TargetActor.Get())
 		{
-			if (Caster)
-			{
-				return Attach.LocalOffset * Caster->GetActorTransform();
-			}
-			return Attach.LocalOffset;
+			return Attach.LocalOffset * Target->GetActorTransform();
 		}
+		return Attach.LocalOffset;
+	}
+
+	case EDeliveryAttachModeV3::Caster:
+	default:
+	{
+		if (Caster)
+		{
+			return Attach.LocalOffset * Caster->GetActorTransform();
+		}
+		return Attach.LocalOffset;
+	}
 	}
 }
 

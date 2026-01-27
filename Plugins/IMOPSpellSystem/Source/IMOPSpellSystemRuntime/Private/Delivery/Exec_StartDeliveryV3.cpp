@@ -33,11 +33,45 @@ void UExec_StartDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* 
 		return;
 	}
 
-	if (P->Spec.DeliveryId == NAME_None)
+	// ---- Fallback: auto-generate a DeliveryId if authoring forgot it ----
+	FDeliverySpecV3 SpecToStart = P->Spec;
+
+	if (SpecToStart.DeliveryId == NAME_None)
 	{
-		UE_LOG(LogIMOPExecStartDeliveryV3, Error, TEXT("StartDelivery: Spec.DeliveryId is None"));
-		return;
+		FName BaseId = NAME_None;
+
+		if (Ctx.Runtime && Ctx.Runtime->GetSpec())
+		{
+			const USpellSpecV3* SpellSpec = Ctx.Runtime->GetSpec();
+			BaseId = (SpellSpec->SpellId != NAME_None)
+				? SpellSpec->SpellId
+				: FName(*SpellSpec->GetName());
+		}
+		else
+		{
+			BaseId = FName(TEXT("Spell"));
+		}
+
+		FString Suffix(TEXT("Auto"));
+		if (Ctx.Runtime)
+		{
+			const FString GuidStr =
+				Ctx.Runtime->GetRuntimeGuid().ToString(EGuidFormats::Digits);
+			Suffix = FString::Printf(TEXT("Auto_%s"), *GuidStr.Left(8));
+		}
+
+		const FString AutoIdStr =
+			FString::Printf(TEXT("%s_%s"), *BaseId.ToString(), *Suffix);
+
+		SpecToStart.DeliveryId = FName(*AutoIdStr);
+
+		UE_LOG(LogIMOPExecStartDeliveryV3, Warning,
+			TEXT("StartDelivery: Spec.DeliveryId was None -> using fallback '%s'"),
+			*SpecToStart.DeliveryId.ToString());
 	}
+	// ---- end fallback ----
+
+
 
 	// Composite-first sanity
 	if (P->Spec.Primitives.Num() <= 0)

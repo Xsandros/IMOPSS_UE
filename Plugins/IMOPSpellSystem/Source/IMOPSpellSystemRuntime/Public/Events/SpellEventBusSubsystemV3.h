@@ -12,12 +12,13 @@
 /**
  * Simple deterministic event bus:
  * - Listener subscribes with optional TagFilter:
- *     - empty/invalid filter => receive all events
- *     - otherwise receive if Ev.EventTag matches the filter (MatchesTag)
+ *   - empty/invalid filter => receive all events
+ *   - otherwise receive if Ev.EventTag matches the filter (MatchesTag)
  * - Unsubscribe by handle.
  *
  * NOTE: This bus intentionally keeps payload-agnostic: SpellEventV3 is the common envelope.
  */
+
 USTRUCT(BlueprintType)
 struct FSpellEventSubscriptionHandleV3
 {
@@ -27,6 +28,22 @@ struct FSpellEventSubscriptionHandleV3
 	int32 Id = 0;
 
 	bool IsValid() const { return Id != 0; }
+};
+
+// IMPORTANT: USTRUCT must be in GLOBAL SCOPE (not nested in a UCLASS)
+USTRUCT()
+struct FSpellEventBusSubscriberV3
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	int32 Id = 0;
+
+	UPROPERTY()
+	TWeakObjectPtr<UObject> ListenerObj;
+
+	UPROPERTY()
+	FGameplayTag TagFilter;
 };
 
 UCLASS()
@@ -53,23 +70,8 @@ public:
 	int32 GetSubscriberCount() const { return Subscribers.Num(); }
 
 private:
-	USTRUCT()
-	struct FSubscriber
-	{
-		GENERATED_BODY()
-
-		UPROPERTY()
-		int32 Id = 0;
-
-		UPROPERTY()
-		TWeakObjectPtr<UObject> ListenerObj;
-
-		UPROPERTY()
-		FGameplayTag TagFilter;
-	};
-
 	UPROPERTY()
-	TArray<FSubscriber> Subscribers;
+	TArray<FSpellEventBusSubscriberV3> Subscribers;
 
 	int32 NextId = 1;
 

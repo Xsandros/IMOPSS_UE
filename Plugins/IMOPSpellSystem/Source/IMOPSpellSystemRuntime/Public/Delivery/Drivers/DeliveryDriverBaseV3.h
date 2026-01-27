@@ -88,7 +88,8 @@ protected:
 		FSpellEventV3 Ev;
 		Ev.RuntimeGuid = ResolveRuntimeGuid(Ctx);
 		Ev.EventTag = Tag;
-		Ev.Instigator = Ctx.GetCaster();
+		Ev.Caster = Ctx.GetCaster();
+
 		Ev.Magnitude = Magnitude;
 
 		// Always include identity tags (very useful for debugging, stop policies later)

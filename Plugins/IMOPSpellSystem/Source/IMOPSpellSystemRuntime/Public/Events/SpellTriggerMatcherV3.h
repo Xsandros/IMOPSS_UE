@@ -73,6 +73,8 @@ struct FSpellTriggerMatcherV3
 	}
 
 	// Payload-aware match (preferred)
+	// NOTE: FSpellEventV3 is currently envelope-only (no typed payload stored).
+	// Therefore delivery-specific filtering is performed via tags on Ev.Tags using prefix-string matching.
 	bool MatchesEvent(const FSpellEventV3& Ev) const
 	{
 		if (!Matches(Ev.EventTag))
@@ -85,41 +87,58 @@ struct FSpellTriggerMatcherV3
 			return true;
 		}
 
-		// Filter only applies to Delivery payloads
-		const FDeliveryEventContextV3* D = Ev.Data.GetPtr<FDeliveryEventContextV3>();
-		if (!D)
+		// Filter only applies to Delivery-ish events.
+		// We do NOT assume gameplay tags are registered; we match by string prefixes.
+		auto HasTagWithPrefix = [&Ev](const FString& Prefix) -> bool
 		{
-			// If filter is enabled but payload isn't a delivery event -> no match
-			return false;
-		}
+			TArray<FGameplayTag> Tags;
+			Ev.Tags.GetGameplayTagArray(Tags);
 
+			for (const FGameplayTag& T : Tags)
+			{
+				const FString S = T.ToString();
+				if (S.StartsWith(Prefix))
+				{
+					return true;
+				}
+			}
+			return false;
+		};
+
+		// Optional: EmitterIndex filter via tags like "Delivery.EmitterIndex.3"
 		if (bFilterByEmitterIndex)
 		{
-			if (D->EmitterIndex != EmitterIndex)
+			const FString Prefix = FString::Printf(TEXT("Delivery.EmitterIndex.%d"), EmitterIndex);
+			if (!HasTagWithPrefix(Prefix))
 			{
 				return false;
 			}
 		}
 
+		// Optional: SpawnSlot filter via tags like "Delivery.SpawnSlot.2"
 		if (bFilterBySpawnSlot)
 		{
-			if (D->SpawnSlot != SpawnSlot)
+			const FString Prefix = FString::Printf(TEXT("Delivery.SpawnSlot.%d"), SpawnSlot);
+			if (!HasTagWithPrefix(Prefix))
 			{
 				return false;
 			}
 		}
 
-		
-		const FName Pid = D->PrimitiveId;
-
+		// PrimitiveId filtering via:
+		// - exact: "Delivery.Primitive.<PrimitiveId>"
+		// - prefix: "Delivery.Primitive.<Prefix...>"
 		bool bOk = false;
+
 		if (PrimitiveId != NAME_None)
 		{
-			bOk = (Pid == PrimitiveId);
+			const FString Exact = FString::Printf(TEXT("Delivery.Primitive.%s"), *PrimitiveId.ToString());
+			bOk = HasTagWithPrefix(Exact);
 		}
 		else if (!PrimitiveIdPrefix.IsEmpty())
 		{
-			bOk = Pid.ToString().StartsWith(PrimitiveIdPrefix);
+			const FString Prefix = FString::Printf(TEXT("Delivery.Primitive.%s"), *PrimitiveIdPrefix);
+			bOk = HasTagWithPrefix(Prefix);
 		}
 		else
 		{
@@ -132,7 +151,6 @@ struct FSpellTriggerMatcherV3
 			bOk = !bOk;
 		}
 		return bOk;
-		
-		
 	}
+
 };

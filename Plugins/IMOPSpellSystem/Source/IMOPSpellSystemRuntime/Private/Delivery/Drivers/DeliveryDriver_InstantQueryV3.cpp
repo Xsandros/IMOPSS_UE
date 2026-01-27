@@ -2,13 +2,11 @@
 
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
+#include "Engine/EngineTypes.h" // FOverlapResult, FOverlapResult::GetActor/GetComponent
 
-#include "Actions/SpellActionExecutorV3.h"
+
 #include "Runtime/SpellRuntimeV3.h"
-
 #include "Stores/SpellTargetStoreV3.h"
-#include "Targeting/TargetingTypesV3.h"
-
 #include "Core/SpellGameplayTagsV3.h"
 #include "Events/SpellEventBusSubsystemV3.h"
 #include "Events/SpellEventV3.h"
@@ -16,6 +14,7 @@
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "CollisionShape.h"
+#include "Engine/OverlapResult.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPDeliveryInstantQueryV3, Log, All);
 
@@ -27,7 +26,7 @@ static USpellEventBusSubsystemV3* ResolveEventBus(const FSpellExecContextV3& Ctx
 	}
 	if (UWorld* W = Ctx.GetWorld())
 	{
-		return W->GetGameInstance() ? W->GetGameInstance()->GetSubsystem<USpellEventBusSubsystemV3>() : nullptr;
+		return W->GetSubsystem<USpellEventBusSubsystemV3>();
 	}
 	return nullptr;
 }
@@ -77,8 +76,8 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, UDeli
 
 	const bool bAny = EvaluateOnce(Ctx, Group, PrimitiveCtx);
 
-	// Instant query ends immediately
-	Stop(Ctx, Group, bAny ? EDeliveryStopReasonV3::OnFirstHit : EDeliveryStopReasonV3::Expired);
+	// Instant query ends immediately.
+	Stop(Ctx, Group, bAny ? EDeliveryStopReasonV3::OnFirstHit : EDeliveryStopReasonV3::DurationElapsed);
 }
 
 bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
@@ -133,17 +132,48 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 		FCollisionShape CS;
 		switch (Spec.Shape.Kind)
 		{
-			case EDeliveryShapeV3::Sphere:   CS = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius)); break;
-			case EDeliveryShapeV3::Capsule:  CS = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight)); break;
-			case EDeliveryShapeV3::Box:      CS = FCollisionShape::MakeBox(Spec.Shape.Extents); break;
-			default:                         CS = FCollisionShape::MakeSphere(0.f); break;
+		case EDeliveryShapeV3::Sphere:
+			CS = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius));
+			break;
+		case EDeliveryShapeV3::Capsule:
+			CS = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight));
+			break;
+		case EDeliveryShapeV3::Box:
+			CS = FCollisionShape::MakeBox(Spec.Shape.Extents);
+			break;
+		default:
+			CS = FCollisionShape::MakeSphere(0.f);
+			break;
 		}
 
 		// Sweep along the line; if author asked Overlap, do a stationary overlap at From.
 		if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
 		{
-			bAny = World->OverlapMultiByProfile(Hits, From, FQuat::Identity, Profile, CS, Params);
+			TArray<FOverlapResult> Overlaps;
+			bAny = World->OverlapMultiByProfile(Overlaps, From, FQuat::Identity, Profile, CS, Params);
+
+			// For overlap mode: emit events directly from overlaps (no fake FHitResult required)
+			if (bAny)
+			{
+				for (const FOverlapResult& O : Overlaps)
+				{
+					if (AActor* A = O.GetActor())
+					{
+						// Emit a minimal per-actor hit event (no impact point / normal)
+						// We reuse the existing downstream "write to target store" via Hits list:
+						FHitResult& HR = Hits.AddDefaulted_GetRef();
+						HR.Location = A->GetActorLocation();
+						HR.ImpactPoint = HR.Location;
+
+						// Store actor/component in the officially supported fields:
+						// (We don't use SetActor/SetComponent because your build doesn't have them.)
+						HR.HitObjectHandle = FActorInstanceHandle(A);
+						HR.Component = O.GetComponent();
+					}
+				}
+			}
 		}
+
 		else
 		{
 			bAny = World->SweepMultiByProfile(Hits, From, To, FQuat::Identity, Profile, CS, Params);
@@ -215,7 +245,7 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 			Ev.RuntimeGuid = ResolveRuntimeGuid(Ctx);
 			Ev.Caster = Ctx.GetCaster();
 			Ev.Sender = Ctx.GetCaster();
-			Ev.FrameNumber = GFrameNumber;
+			Ev.FrameNumber = (int32)GFrameCounter;
 			Ev.TimeSeconds = World ? World->GetTimeSeconds() : 0.f;
 
 			Bus->Emit(Ev);
@@ -223,7 +253,10 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	}
 
 	UE_LOG(LogIMOPDeliveryInstantQueryV3, Verbose, TEXT("InstantQuery: %s/%s hits=%d any=%d"),
-		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), Hits.Num(), bAny ? 1 : 0);
+		*GroupHandle.DeliveryId.ToString(),
+		*PrimitiveId.ToString(),
+		Hits.Num(),
+		bAny ? 1 : 0);
 
 	return bAny;
 }
@@ -238,5 +271,8 @@ void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& /*Ctx*/, UD
 	bActive = false;
 
 	UE_LOG(LogIMOPDeliveryInstantQueryV3, Log, TEXT("InstantQuery stopped: %s/%s inst=%d reason=%d"),
-		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), GroupHandle.InstanceIndex, (int32)Reason);
+		*GroupHandle.DeliveryId.ToString(),
+		*PrimitiveId.ToString(),
+		GroupHandle.InstanceIndex,
+		(int32)Reason);
 }

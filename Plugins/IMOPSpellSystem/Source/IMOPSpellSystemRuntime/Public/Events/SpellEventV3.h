@@ -2,12 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "StructUtils/InstancedStruct.h"
 #include "SpellEventV3.generated.h"
 
 /**
  * Common event envelope used by SpellEventBusSubsystemV3.
- * Payloads are intentionally NOT embedded here (Phase 4B compile-first).
- * Later phases can add optional payload references via separate channels (e.g. Trace, DeliveryEventContext).
+ * Payloads live in Data as FInstancedStruct (typed, optional).
  */
 USTRUCT(BlueprintType)
 struct FSpellEventV3
@@ -22,9 +22,16 @@ struct FSpellEventV3
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
     FGameplayTag EventTag;
 
-    // Optional sender (caster/owner/etc.)
+    // Common optional sender info (used by runtime filters/logging)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
-    TWeakObjectPtr<AActor> Instigator;
+    TWeakObjectPtr<AActor> Caster;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
+    TWeakObjectPtr<UObject> Sender;
+
+    // Optional instigator (sometimes differs from caster)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
+    TWeakObjectPtr<UObject> Instigator;
 
     // Optional numeric data (lightweight)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
@@ -33,4 +40,15 @@ struct FSpellEventV3
     // Optional generic tags (lightweight)
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
     FGameplayTagContainer Tags;
+
+    // Optional typed payload (DeliveryEventContextV3, RelationResolved, etc.)
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
+    FInstancedStruct Data;
+
+    // Optional debug timing
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
+    int32 FrameNumber = 0;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
+    float TimeSeconds = 0.f;
 };

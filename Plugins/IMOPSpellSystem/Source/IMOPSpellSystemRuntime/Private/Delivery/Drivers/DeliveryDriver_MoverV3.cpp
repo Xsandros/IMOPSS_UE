@@ -11,6 +11,13 @@
 #include "Engine/World.h"
 #include "CollisionShape.h"
 
+// Needed for FOverlapResult
+#include "Engine/EngineTypes.h"
+
+// Needed for FActorInstanceHandle used by FHitResult in UE5
+#include "Engine/ActorInstanceHandle.h"
+#include "Engine/OverlapResult.h"
+
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPDeliveryMoverV3, Log, All);
 
 FName UDeliveryDriver_MoverV3::ResolveOutTargetSetName(const UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx)
@@ -44,16 +51,16 @@ FCollisionShape UDeliveryDriver_MoverV3::MakeCollisionShape(const FDeliveryShape
 {
 	switch (Shape.Kind)
 	{
-		case EDeliveryShapeV3::Sphere:
-			return FCollisionShape::MakeSphere(FMath::Max(0.f, Shape.Radius));
-		case EDeliveryShapeV3::Capsule:
-			return FCollisionShape::MakeCapsule(FMath::Max(0.f, Shape.Radius), FMath::Max(0.f, Shape.HalfHeight));
-		case EDeliveryShapeV3::Box:
-			return FCollisionShape::MakeBox(Shape.Extents);
-		case EDeliveryShapeV3::Ray:
-		default:
-			// Ray is handled via line trace; return tiny sphere for safety
-			return FCollisionShape::MakeSphere(0.f);
+	case EDeliveryShapeV3::Sphere:
+		return FCollisionShape::MakeSphere(FMath::Max(0.f, Shape.Radius));
+	case EDeliveryShapeV3::Capsule:
+		return FCollisionShape::MakeCapsule(FMath::Max(0.f, Shape.Radius), FMath::Max(0.f, Shape.HalfHeight));
+	case EDeliveryShapeV3::Box:
+		return FCollisionShape::MakeBox(Shape.Extents);
+	case EDeliveryShapeV3::Ray:
+	default:
+		// Ray handled via line trace; return tiny sphere for safety
+		return FCollisionShape::MakeSphere(0.f);
 	}
 }
 
@@ -64,27 +71,27 @@ bool UDeliveryDriver_MoverV3::GetHomingTargetLocation(const FSpellExecContextV3&
 		return false;
 	}
 
-	if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
+	USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get());
+	if (!Store)
 	{
-		// Prefer Get() if exists, else Find()/Get* depending on your store API
-		const FTargetSetV3* TS = Store->Find(M.HomingTargetSet);
-		if (!TS)
-		{
-			TS = Store->Get(M.HomingTargetSet);
-		}
+		return false;
+	}
 
-		if (TS)
+	FTargetSetV3 TS;
+	if (!Store->Get(M.HomingTargetSet, TS))
+	{
+		return false;
+	}
+
+	for (const FTargetRefV3& R : TS.Targets)
+	{
+		if (AActor* A = R.Actor.Get())
 		{
-			for (const FTargetRefV3& R : TS->Targets)
-			{
-				if (AActor* A = R.Actor.Get())
-				{
-					OutLoc = A->GetActorLocation();
-					return true;
-				}
-			}
+			OutLoc = A->GetActorLocation();
+			return true;
 		}
 	}
+
 	return false;
 }
 
@@ -94,10 +101,10 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 	const FDeliveryPrimitiveSpecV3& Spec,
 	const FVector& From,
 	const FVector& To,
-	TArray<FHitResult>& OutHits
-) const
+	TArray<FHitResult>& OutHits) const
 {
 	OutHits.Reset();
+
 	if (!World)
 	{
 		return false;
@@ -121,7 +128,7 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 	}
 
 	const FCollisionShape CS = MakeCollisionShape(Spec.Shape);
-	const FQuat Rot = FQuat::Identity; // keep deterministic & simple
+	const FQuat Rot = FQuat::Identity; // deterministic
 
 	// Overlap mode => overlap at destination
 	if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
@@ -130,15 +137,23 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 		const bool bAny = World->OverlapMultiByProfile(Overlaps, To, Rot, Profile, CS, Params);
 		if (bAny)
 		{
+			OutHits.Reserve(Overlaps.Num());
 			for (const FOverlapResult& O : Overlaps)
 			{
-				if (AActor* A = O.GetActor())
+				AActor* A = O.GetActor();
+				if (!A)
 				{
-					FHitResult H;
-					H.Actor = A;
-					H.ImpactPoint = A->GetActorLocation();
-					OutHits.Add(H);
+					continue;
 				}
+
+				FHitResult H;
+				// UE5: don't write H.Actor directly. Store actor via HitObjectHandle.
+				H.HitObjectHandle = FActorInstanceHandle(A);
+				H.Component = O.GetComponent();
+				H.Location = A->GetActorLocation();
+				H.ImpactPoint = H.Location;
+
+				OutHits.Add(H);
 			}
 		}
 		return bAny;
@@ -153,8 +168,7 @@ void UDeliveryDriver_MoverV3::DebugDraw(
 	const FDeliveryPrimitiveSpecV3& Spec,
 	const FVector& From,
 	const FVector& To,
-	const TArray<FHitResult>& Hits
-) const
+	const TArray<FHitResult>& Hits) const
 {
 	UWorld* World = Ctx.GetWorld();
 	if (!World || !Group)
@@ -179,17 +193,17 @@ void UDeliveryDriver_MoverV3::DebugDraw(
 	{
 		switch (Spec.Shape.Kind)
 		{
-			case EDeliveryShapeV3::Sphere:
-				DrawDebugSphere(World, To, Spec.Shape.Radius, 12, FColor::Green, false, Dur, 0, 1.0f);
-				break;
-			case EDeliveryShapeV3::Capsule:
-				DrawDebugCapsule(World, To, Spec.Shape.HalfHeight, Spec.Shape.Radius, FQuat::Identity, FColor::Green, false, Dur, 0, 1.0f);
-				break;
-			case EDeliveryShapeV3::Box:
-				DrawDebugBox(World, To, Spec.Shape.Extents, FQuat::Identity, FColor::Green, false, Dur, 0, 1.0f);
-				break;
-			default:
-				break;
+		case EDeliveryShapeV3::Sphere:
+			DrawDebugSphere(World, To, Spec.Shape.Radius, 12, FColor::Green, false, Dur, 0, 1.0f);
+			break;
+		case EDeliveryShapeV3::Capsule:
+			DrawDebugCapsule(World, To, Spec.Shape.HalfHeight, Spec.Shape.Radius, FQuat::Identity, FColor::Green, false, Dur, 0, 1.0f);
+			break;
+		case EDeliveryShapeV3::Box:
+			DrawDebugBox(World, To, Spec.Shape.Extents, FQuat::Identity, FColor::Green, false, Dur, 0, 1.0f);
+			break;
+		default:
+			break;
 		}
 	}
 
@@ -206,8 +220,7 @@ void UDeliveryDriver_MoverV3::WriteHitsToTargetStore(
 	const FSpellExecContextV3& Ctx,
 	const UDeliveryGroupRuntimeV3* Group,
 	const FDeliveryContextV3& PrimitiveCtx,
-	const TArray<FHitResult>& Hits
-) const
+	const TArray<FHitResult>& Hits) const
 {
 	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
 	if (OutSetName == NAME_None)
@@ -246,7 +259,6 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGro
 		return;
 	}
 
-	// Initialize motion state from current pose
 	PositionWS = PrimitiveCtx.FinalPoseWS.GetLocation();
 	TraveledDistance = 0.f;
 	PierceHits = 0;
@@ -258,7 +270,6 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGro
 	NextSimTimeSeconds = World->GetTimeSeconds();
 
 	EmitPrimitiveStarted(Ctx);
-
 	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover started: %s/%s"), *GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString());
 }
 
@@ -269,7 +280,6 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 		return false;
 	}
 
-	// Use live ctx if it exists (rig may update anchor pose; motion stays ours)
 	const FDeliveryContextV3* Live = Group->PrimitiveCtxById.Find(PrimitiveId);
 	const FDeliveryContextV3& PCtx = Live ? *Live : LocalCtx;
 
@@ -279,41 +289,37 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 	// Max distance
 	if (M.MaxDistance > 0.f && TraveledDistance >= M.MaxDistance)
 	{
-		Stop(Ctx, Group, EDeliveryStopReasonV3::Expired);
+		Stop(Ctx, Group, EDeliveryStopReasonV3::DurationElapsed);
 		return false;
 	}
 
 	// Update velocity based on motion kind
 	switch (M.Motion)
 	{
-		case EMoverMotionKindV3::Homing:
+	case EMoverMotionKindV3::Homing:
+	{
+		FVector TargetLoc;
+		if (GetHomingTargetLocation(Ctx, M, TargetLoc))
 		{
-			FVector TargetLoc;
-			if (GetHomingTargetLocation(Ctx, M, TargetLoc))
-			{
-				const FVector DesiredDir = (TargetLoc - PositionWS).GetSafeNormal();
-				const FVector CurrentDir = VelocityWS.IsNearlyZero() ? DesiredDir : VelocityWS.GetSafeNormal();
-
-				const float Strength = FMath::Clamp(M.HomingStrength, 0.f, 1000.f);
-				const float Alpha = FMath::Clamp(Strength * StepSeconds, 0.f, 1.f);
-
-				const FVector NewDir = FMath::Lerp(CurrentDir, DesiredDir, Alpha).GetSafeNormal();
-				VelocityWS = NewDir * FMath::Max(0.f, M.Speed);
-			}
-			break;
+			const FVector DesiredDir = (TargetLoc - PositionWS).GetSafeNormal();
+			const FVector CurrentDir = VelocityWS.IsNearlyZero() ? DesiredDir : VelocityWS.GetSafeNormal();
+			const float Strength = FMath::Clamp(M.HomingStrength, 0.f, 1000.f);
+			const float Alpha = FMath::Clamp(Strength * StepSeconds, 0.f, 1.f);
+			const FVector NewDir = FMath::Lerp(CurrentDir, DesiredDir, Alpha).GetSafeNormal();
+			VelocityWS = NewDir * FMath::Max(0.f, M.Speed);
 		}
-
-		case EMoverMotionKindV3::Ballistic:
-		{
-			const float G = -980.f * FMath::Max(0.f, M.GravityScale);
-			VelocityWS.Z += G * StepSeconds;
-			break;
-		}
-
-		case EMoverMotionKindV3::Straight:
-		default:
-			// keep constant velocity
-			break;
+		break;
+	}
+	case EMoverMotionKindV3::Ballistic:
+	{
+		const float G = -980.f * FMath::Max(0.f, M.GravityScale);
+		VelocityWS.Z += G * StepSeconds;
+		break;
+	}
+	case EMoverMotionKindV3::Straight:
+	default:
+		// keep constant velocity
+		break;
 	}
 
 	const FVector From = PositionWS;
@@ -352,7 +358,6 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 				Stop(Ctx, Group, EDeliveryStopReasonV3::OnFirstHit);
 				return false;
 			}
-
 			PositionWS = To;
 		}
 	}
@@ -401,7 +406,6 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGrou
 		{
 			return;
 		}
-
 		NextSimTimeSeconds = Now + Interval;
 		StepSim(Ctx, Group, Interval);
 	}

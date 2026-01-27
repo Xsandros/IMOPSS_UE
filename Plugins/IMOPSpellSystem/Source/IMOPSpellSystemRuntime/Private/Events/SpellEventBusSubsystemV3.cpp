@@ -70,7 +70,7 @@ FSpellEventSubscriptionHandleV3 USpellEventBusSubsystemV3::Subscribe(UObject* Li
 		return Handle;
 	}
 
-	FSubscriber S;
+	FSpellEventBusSubscriberV3 S;
 	S.Id = NextId++;
 	S.ListenerObj = ListenerObj;
 	S.TagFilter = TagFilter;
@@ -102,7 +102,7 @@ void USpellEventBusSubsystemV3::Unsubscribe(const FSpellEventSubscriptionHandleV
 		return;
 	}
 
-	const int32 Removed = Subscribers.RemoveAll([&](const FSubscriber& S)
+	const int32 Removed = Subscribers.RemoveAll([&](const FSpellEventBusSubscriberV3& S)
 	{
 		return S.Id == Handle.Id;
 	});
@@ -117,12 +117,12 @@ void USpellEventBusSubsystemV3::Unsubscribe(const FSpellEventSubscriptionHandleV
 void USpellEventBusSubsystemV3::Emit(const FSpellEventV3& Ev)
 {
 	// Compact dead subscribers occasionally
-	Subscribers.RemoveAll([](const FSubscriber& S)
+	Subscribers.RemoveAll([](const FSpellEventBusSubscriberV3& S)
 	{
 		return !S.ListenerObj.IsValid();
 	});
 
-	for (const FSubscriber& S : Subscribers)
+	for (const FSpellEventBusSubscriberV3& S : Subscribers)
 	{
 		UObject* Obj = S.ListenerObj.Get();
 		if (!Obj)

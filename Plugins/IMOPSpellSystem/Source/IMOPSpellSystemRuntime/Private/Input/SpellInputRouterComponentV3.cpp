@@ -261,7 +261,7 @@ void USpellInputRouterComponentV3::ExecuteSlotByIndex(int32 SlotIndex)
 	}
 
 	USpellActionRegistryV3* Registry = Core->GetActionRegistry();
-	USpellEventBusSubsystemV3* EventBus = GI->GetSubsystem<USpellEventBusSubsystemV3>();
+	USpellEventBusSubsystemV3* EventBus = World ? World->GetSubsystem<USpellEventBusSubsystemV3>() : nullptr;
 
 	if (!Registry || !EventBus)
 	{

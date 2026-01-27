@@ -76,7 +76,8 @@ void USpellCastingComponentV3::CastSpell_Internal(USpellSpecV3* Spec)
 	if (!GI) return;
 
 	USpellCoreSubsystemV3* Core = GI->GetSubsystem<USpellCoreSubsystemV3>();
-	USpellEventBusSubsystemV3* EventBus = GI->GetSubsystem<USpellEventBusSubsystemV3>();
+	USpellEventBusSubsystemV3* EventBus = W ? W->GetSubsystem<USpellEventBusSubsystemV3>() : nullptr;
+
 	if (!Core || !EventBus)
 	{
 		UE_LOG(LogTemp, Error, TEXT("CastSpell_Internal: missing Core/EventBus subsystem."));

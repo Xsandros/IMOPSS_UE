@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-
 #include "DeliveryTypesV3.generated.h"
 
 // ============================================================
@@ -22,9 +21,10 @@ UENUM(BlueprintType)
 enum class EDeliveryStopReasonV3 : uint8
 {
 	Manual,
-	SpellEnded,
-	Expired,
+	DurationElapsed,
 	OnFirstHit,
+	OnEvent,
+	OwnerDestroyed,
 	Failed
 };
 
@@ -84,15 +84,42 @@ struct FDeliveryHandleV3
 	{
 		return A.RuntimeGuid == B.RuntimeGuid && A.DeliveryId == B.DeliveryId && A.InstanceIndex == B.InstanceIndex;
 	}
-
-	friend uint32 GetTypeHash(const FDeliveryHandleV3& H)
-	{
-		uint32 X = ::GetTypeHash(H.RuntimeGuid);
-		X = HashCombine(X, ::GetTypeHash(H.DeliveryId));
-		X = HashCombine(X, ::GetTypeHash(H.InstanceIndex));
-		return X;
-	}
 };
+
+// IMPORTANT: TMap key hashing (must not rely on GetTypeHash(FGuid) visibility)
+FORCEINLINE uint32 GetTypeHash(const FDeliveryHandleV3& H)
+{
+	// Local, self-contained mixing (no engine overload dependencies)
+	auto HashU32 = [](uint32 X) -> uint32
+	{
+		X ^= X >> 16;
+		X *= 0x7feb352du;
+		X ^= X >> 15;
+		X *= 0x846ca68bu;
+		X ^= X >> 16;
+		return X;
+	};
+
+	auto HashCombineLocal = [&](uint32 A, uint32 B) -> uint32
+	{
+		return HashU32(A ^ (B + 0x9e3779b9u + (A << 6) + (A >> 2)));
+	};
+
+	uint32 X = 0;
+	// Hash Guid components directly
+	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.A));
+	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.B));
+	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.C));
+	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.D));
+
+	// FName hashing: avoid ::GetTypeHash(FName) if you want, but it is usually safe.
+	// We'll still avoid it to keep this self-contained:
+	X = HashCombineLocal(X, HashU32((uint32)H.DeliveryId.GetComparisonIndex().ToUnstableInt()));
+	X = HashCombineLocal(X, HashU32((uint32)H.DeliveryId.GetNumber()));
+
+	X = HashCombineLocal(X, HashU32((uint32)H.InstanceIndex));
+	return X;
+}
 
 // ============================================================
 // Shape + query policy
@@ -143,15 +170,12 @@ struct FDeliveryAttachV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	EDeliveryAttachModeV3 Mode = EDeliveryAttachModeV3::Caster;
 
-	// For CasterSocket mode
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	FName SocketName = NAME_None;
 
-	// For TargetActor mode
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	TWeakObjectPtr<AActor> TargetActor;
 
-	// Local offset relative to chosen base
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	FTransform LocalOffset = FTransform::Identity;
 };

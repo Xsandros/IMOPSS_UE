@@ -89,7 +89,6 @@ protected:
 		Ev.RuntimeGuid = ResolveRuntimeGuid(Ctx);
 		Ev.EventTag = Tag;
 		Ev.Caster = Ctx.GetCaster();
-
 		Ev.Magnitude = Magnitude;
 
 		// Always include identity tags (very useful for debugging, stop policies later)
@@ -100,6 +99,10 @@ protected:
 		// For now, add "semantic" tags if they exist in your tag list:
 		// (No hard dependency here.)
 
+		// NEW: delivery identity
+		Ev.DeliveryHandle = GroupHandle;
+		Ev.DeliveryPrimitiveId = PrimitiveId;
+		
 		Bus->Emit(Ev);
 	}
 

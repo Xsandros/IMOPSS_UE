@@ -243,6 +243,9 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 			FSpellEventV3 Ev;
 			Ev.EventTag = Tags.Event_Delivery_Hit;
 			Ev.RuntimeGuid = ResolveRuntimeGuid(Ctx);
+			Ev.DeliveryHandle = GroupHandle;
+			Ev.DeliveryPrimitiveId = PrimitiveId;
+
 			Ev.Caster = Ctx.GetCaster();
 			Ev.Sender = Ctx.GetCaster();
 			Ev.FrameNumber = (int32)GFrameCounter;

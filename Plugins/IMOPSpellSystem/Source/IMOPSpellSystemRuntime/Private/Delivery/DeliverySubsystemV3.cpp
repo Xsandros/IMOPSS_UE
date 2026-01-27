@@ -66,6 +66,8 @@ static FGuid ResolveRuntimeGuidFromCtx(const FSpellExecContextV3& Ctx)
 	return FGuid();
 }
 
+
+
 // ------------------------------------------------------------
 
 void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)

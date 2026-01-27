@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "StructUtils/InstancedStruct.h"
+#include "Delivery/DeliveryTypesV3.h" // <-- NEU (für FDeliveryHandleV3)
 #include "SpellEventV3.generated.h"
 
 /**
@@ -51,4 +52,13 @@ struct FSpellEventV3
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
     float TimeSeconds = 0.f;
+    
+    // ===== Optional Delivery identity (Composite Deliveries) =====
+    // If DeliveryHandle.DeliveryId != None, this event was produced by a delivery group.
+    // If DeliveryPrimitiveId != None, it came from that specific primitive node.
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
+    FDeliveryHandleV3 DeliveryHandle;
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Spell|Event")
+    FName DeliveryPrimitiveId = NAME_None;
 };

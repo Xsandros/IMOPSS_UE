@@ -9,8 +9,8 @@
 #include "Delivery/Drivers/DeliveryDriver_MoverV3.h"
 #include "Delivery/Drivers/DeliveryDriver_BeamV3.h"
 
+#include "Runtime/SpellRuntimeV3.h"
 #include "Core/SpellGameplayTagsV3.h"
-#include "Events/SpellEventBusSubsystemV3.h"
 
 #include "Engine/World.h"
 
@@ -26,34 +26,13 @@ static uint32 HashName32(FName N)
 	return ::GetTypeHash(N);
 }
 
-static USpellEventBusSubsystemV3* ResolveBus(const FSpellExecContextV3& Ctx)
+static FGuid ResolveRuntimeGuidFromCtx(const FSpellExecContextV3& Ctx)
 {
-	if (Ctx.EventBus)
+	if (const USpellRuntimeV3* R = Cast<USpellRuntimeV3>(Ctx.Runtime.Get()))
 	{
-		return Ctx.EventBus.Get();
+		return R->GetRuntimeGuid();
 	}
-	if (UWorld* W = Ctx.GetWorld())
-	{
-		return W->GetSubsystem<USpellEventBusSubsystemV3>();
-	}
-	return nullptr;
-}
-
-static void EmitDeliveryEvent(const FSpellExecContextV3& Ctx, const FGameplayTag& Tag, float Magnitude = 0.f)
-{
-	USpellEventBusSubsystemV3* Bus = ResolveBus(Ctx);
-	if (!Bus || !Tag.IsValid())
-	{
-		return;
-	}
-
-	FSpellEventV3 Ev;
-	Ev.RuntimeGuid = Ctx.RuntimeGuid;
-	Ev.EventTag = Tag;
-	Ev.Instigator = Ctx.Caster;
-	Ev.Magnitude = Magnitude;
-
-	Bus->Emit(Ev);
+	return FGuid();
 }
 
 void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)
@@ -109,16 +88,17 @@ void UDeliverySubsystemV3::Tick(float DeltaSeconds)
 
 		const FSpellExecContextV3& Ctx = Group->CtxSnapshot;
 
+		// Blackboard phases (enforced by BB rules)
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Time);
-		Group->Blackboard.WriteFloat("Time.Elapsed", Now - Group->StartTimeSeconds, EDeliveryBBOwnerV3::Group);
+		Group->Blackboard.WriteFloat(TEXT("Time.Elapsed"), Now - Group->StartTimeSeconds, EDeliveryBBOwnerV3::Group);
 
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Rig);
 		EvaluateRigIfNeeded(Group, Now);
 
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::DerivedMotion);
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::PrimitiveMotion);
-
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Query);
+
 		for (auto& Pair : Group->DriversByPrimitiveId)
 		{
 			UDeliveryDriverBaseV3* Driver = Pair.Value;
@@ -148,6 +128,145 @@ void UDeliverySubsystemV3::OnSpellEvent(const FSpellEventV3& Ev)
 	}
 }
 
+TObjectPtr<UDeliveryDriverBaseV3> UDeliverySubsystemV3::CreateDriverForKind(EDeliveryKindV3 Kind)
+{
+	switch (Kind)
+	{
+		case EDeliveryKindV3::InstantQuery: return NewObject<UDeliveryDriver_InstantQueryV3>(this);
+		case EDeliveryKindV3::Field:       return NewObject<UDeliveryDriver_FieldV3>(this);
+		case EDeliveryKindV3::Mover:       return NewObject<UDeliveryDriver_MoverV3>(this);
+		case EDeliveryKindV3::Beam:        return NewObject<UDeliveryDriver_BeamV3>(this);
+		default: break;
+	}
+	return nullptr;
+}
+
+int32 UDeliverySubsystemV3::AllocateInstanceIndex(const FGuid& RuntimeGuid, FName DeliveryId)
+{
+	int32& Next = NextInstanceByRuntimeAndId.FindOrAdd(RuntimeGuid).FindOrAdd(DeliveryId);
+	const int32 Out = Next;
+	Next++;
+	return Out;
+}
+
+int32 UDeliverySubsystemV3::ComputeGroupSeed(const FGuid& RuntimeGuid, FName DeliveryId, int32 InstanceIndex) const
+{
+	uint32 H = 0;
+	H = HashCombineFast32(H, ::GetTypeHash(RuntimeGuid));
+	H = HashCombineFast32(H, HashName32(DeliveryId));
+	H = HashCombineFast32(H, (uint32)InstanceIndex);
+	return (int32)(H & 0x7fffffff);
+}
+
+void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, float NowSeconds)
+{
+	if (!Group)
+	{
+		return;
+	}
+
+	const FDeliveryHandleV3& Handle = Group->GroupHandle;
+
+	const float* LastPtr = LastRigEvalTimeByHandle.Find(Handle);
+	const float Interval = FMath::Max(0.f, Group->GroupSpec.RigEvalIntervalSeconds);
+
+	if (LastPtr && Interval > 0.f)
+	{
+		if ((NowSeconds - *LastPtr) < Interval)
+		{
+			return;
+		}
+	}
+
+	// Build a delivery ctx for rig evaluation (group-level)
+	FDeliveryContextV3 RigCtx;
+	RigCtx.GroupHandle = Group->GroupHandle;
+	RigCtx.PrimitiveId = NAME_None;
+	RigCtx.PrimitiveIndex = -1;
+	RigCtx.Spec = FDeliveryPrimitiveSpecV3(); // empty
+	RigCtx.Caster = Group->CtxSnapshot.GetCaster();
+	RigCtx.StartTimeSeconds = Group->StartTimeSeconds;
+	RigCtx.Seed = Group->GroupSeed;
+	RigCtx.AnchorPoseWS = FTransform::Identity;
+	RigCtx.FinalPoseWS = FTransform::Identity;
+
+	FDeliveryRigEvalResultV3 RigOut;
+	FDeliveryRigEvaluatorV3::Evaluate(Group->CtxSnapshot, RigCtx, Group->GroupSpec.Rig, NowSeconds, RigOut);
+
+	// Cache WS transforms
+	Group->RigCache.RootWS = FTransform(RigOut.Root.Rotation, RigOut.Root.Location);
+
+	Group->RigCache.EmittersWS.Reset();
+	Group->RigCache.EmittersWS.Reserve(RigOut.Emitters.Num());
+	Group->RigCache.EmitterNames = Group->GroupSpec.Rig.EmitterNames; // safe even if empty/mismatch
+
+	for (const FDeliveryRigEmitterV3& E : RigOut.Emitters)
+	{
+		Group->RigCache.EmittersWS.Add(FTransform(E.Pose.Rotation, E.Pose.Location));
+	}
+
+	// Update all primitive anchor/final poses derived from rig
+	for (auto& Pair : Group->PrimitiveCtxById)
+	{
+		FDeliveryContextV3& PCtx = Pair.Value;
+
+		const FTransform AnchorWS = ResolveAnchorPoseWS(Group->CtxSnapshot, Group, PCtx);
+		PCtx.AnchorPoseWS = AnchorWS;
+
+		// For now: final pose defaults to anchor (PrimitiveMotion later can overwrite)
+		PCtx.FinalPoseWS = AnchorWS;
+	}
+
+	LastRigEvalTimeByHandle.Add(Handle, NowSeconds);
+}
+
+FTransform UDeliverySubsystemV3::ResolveAnchorPoseWS(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) const
+{
+	if (!Group)
+	{
+		return FTransform::Identity;
+	}
+
+	const FDeliveryPrimitiveSpecV3& P = PrimitiveCtx.Spec;
+
+	// Root
+	if (P.Anchor.Kind == EDeliveryAnchorKindV3::Root)
+	{
+		return Group->RigCache.RootWS * P.Anchor.LocalOffset;
+	}
+
+	// EmitterIndex
+	if (P.Anchor.Kind == EDeliveryAnchorKindV3::EmitterIndex)
+	{
+		const int32 Idx = P.Anchor.EmitterIndex;
+		if (Group->RigCache.EmittersWS.IsValidIndex(Idx))
+		{
+			return Group->RigCache.EmittersWS[Idx] * P.Anchor.LocalOffset;
+		}
+		// fallback to root
+		return Group->RigCache.RootWS * P.Anchor.LocalOffset;
+	}
+
+	// EmitterName (if present)
+	if (P.Anchor.Kind == EDeliveryAnchorKindV3::EmitterName && P.Anchor.EmitterName != NAME_None)
+	{
+		const int32 Found = Group->RigCache.EmitterNames.IndexOfByKey(P.Anchor.EmitterName);
+		if (Found != INDEX_NONE && Group->RigCache.EmittersWS.IsValidIndex(Found))
+		{
+			return Group->RigCache.EmittersWS[Found] * P.Anchor.LocalOffset;
+		}
+		return Group->RigCache.RootWS * P.Anchor.LocalOffset;
+	}
+
+	// Caster fallback
+	if (AActor* Caster = Ctx.GetCaster())
+	{
+		return Caster->GetActorTransform() * P.Anchor.LocalOffset;
+	}
+
+	return Group->RigCache.RootWS * P.Anchor.LocalOffset;
+}
+
 bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const FDeliverySpecV3& Spec, FDeliveryHandleV3& OutHandle)
 {
 	if (!GetWorld())
@@ -163,16 +282,22 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 
 	if (Spec.Primitives.Num() == 0)
 	{
-		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Spec.Primitives is empty (Composite-first requires >=1). DeliveryId=%s"),
-			*Spec.DeliveryId.ToString());
+		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Spec.Primitives is empty (Composite-first requires >=1). DeliveryId=%s"), *Spec.DeliveryId.ToString());
+		return false;
+	}
+
+	const FGuid RuntimeGuid = ResolveRuntimeGuidFromCtx(Ctx);
+	if (!RuntimeGuid.IsValid())
+	{
+		UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Ctx.Runtime has no valid RuntimeGuid. DeliveryId=%s"), *Spec.DeliveryId.ToString());
 		return false;
 	}
 
 	const float Now = GetWorld()->GetTimeSeconds();
-	const int32 InstanceIndex = AllocateInstanceIndex(Ctx.RuntimeGuid, Spec.DeliveryId);
+	const int32 InstanceIndex = AllocateInstanceIndex(RuntimeGuid, Spec.DeliveryId);
 
 	FDeliveryHandleV3 Handle;
-	Handle.RuntimeGuid = Ctx.RuntimeGuid;
+	Handle.RuntimeGuid = RuntimeGuid;
 	Handle.DeliveryId = Spec.DeliveryId;
 	Handle.InstanceIndex = InstanceIndex;
 
@@ -181,32 +306,21 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	Group->GroupSpec = Spec;
 	Group->CtxSnapshot = Ctx;
 	Group->StartTimeSeconds = Now;
-	Group->GroupSeed = ComputeGroupSeed(Ctx.RuntimeGuid, Spec.DeliveryId, InstanceIndex);
+	Group->GroupSeed = ComputeGroupSeed(RuntimeGuid, Spec.DeliveryId, InstanceIndex);
 
 	Group->Blackboard.InitFromSpec(Spec.BlackboardInit, Spec.OwnershipRules);
 
-	// Evaluate rig immediately + record time
+	// Rig eval immediately
 	Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Rig);
 	EvaluateRigIfNeeded(Group, Now);
-	LastRigEvalTimeByHandle.Add(Handle, Now);
 
-	ActiveGroups.Add(Handle, Group);
-	OutHandle = Handle;
-
-	// ===== Emit: Group Started
-	{
-		const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
-		EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Started, /*Magnitude=*/(float)InstanceIndex);
-	}
-
-	// ===== Spawn primitives
+	// Create primitive contexts + drivers
 	for (int32 i = 0; i < Spec.Primitives.Num(); ++i)
 	{
 		const FDeliveryPrimitiveSpecV3& PSpec = Spec.Primitives[i];
 		if (PSpec.PrimitiveId == NAME_None)
 		{
-			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Primitive has None PrimitiveId. DeliveryId=%s idx=%d"),
-				*Spec.DeliveryId.ToString(), i);
+			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Primitive has None PrimitiveId. DeliveryId=%s Index=%d"), *Spec.DeliveryId.ToString(), i);
 			continue;
 		}
 
@@ -215,21 +329,20 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		PCtx.PrimitiveId = PSpec.PrimitiveId;
 		PCtx.PrimitiveIndex = i;
 		PCtx.Spec = PSpec;
-		PCtx.Caster = Ctx.Caster;
+		PCtx.Caster = Ctx.GetCaster();
 		PCtx.StartTimeSeconds = Now;
-
-		const uint32 Base = uint32(Group->GroupSeed);
-		const uint32 Mix = HashName32(PSpec.PrimitiveId);
-		PCtx.Seed = int32(HashCombineFast32(Base, Mix));
+		PCtx.Seed = Group->GroupSeed ^ (int32)HashName32(PSpec.PrimitiveId);
 
 		PCtx.AnchorPoseWS = ResolveAnchorPoseWS(Ctx, Group, PCtx);
 		PCtx.FinalPoseWS = PCtx.AnchorPoseWS;
 
+		Group->PrimitiveCtxById.Add(PSpec.PrimitiveId, PCtx);
+
 		TObjectPtr<UDeliveryDriverBaseV3> Driver = CreateDriverForKind(PSpec.Kind);
 		if (!Driver)
 		{
-			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Failed to create driver Kind=%d PrimitiveId=%s DeliveryId=%s"),
-				(int32)PSpec.Kind, *PSpec.PrimitiveId.ToString(), *Spec.DeliveryId.ToString());
+			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: No driver for kind=%d (%s/%s)"),
+				(int32)PSpec.Kind, *Spec.DeliveryId.ToString(), *PSpec.PrimitiveId.ToString());
 			continue;
 		}
 
@@ -237,231 +350,24 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Driver->PrimitiveId = PSpec.PrimitiveId;
 		Driver->bActive = true;
 
-		Group->PrimitiveCtxById.Add(PSpec.PrimitiveId, PCtx);
 		Group->DriversByPrimitiveId.Add(PSpec.PrimitiveId, Driver);
 
-		// Emit primitive started BEFORE driver start (so listeners can prepare)
-		Driver->EmitPrimitiveStarted(Ctx);
-
 		Driver->Start(Ctx, Group, PCtx);
-
-		// Also emit legacy-per-primitive started tag (if you want both levels, keep)
-		{
-			const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
-			EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Primitive_Started, /*Magnitude=*/(float)i);
-		}
 	}
 
-	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StartDelivery: Group %s #%d spawned with %d primitives"),
+	ActiveGroups.Add(Handle, Group);
+	OutHandle = Handle;
+
+	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("Delivery group started: %s inst=%d primitives=%d"),
 		*Spec.DeliveryId.ToString(), InstanceIndex, Spec.Primitives.Num());
 
 	return true;
-}
-
-bool UDeliverySubsystemV3::StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason)
-{
-	return StopGroupInternal(Ctx, Handle, Reason);
-}
-
-bool UDeliverySubsystemV3::StopById(const FSpellExecContextV3& Ctx, FName DeliveryId, EDeliveryStopReasonV3 Reason)
-{
-	bool bAny = false;
-
-	TArray<FDeliveryHandleV3> Handles;
-	ActiveGroups.GetKeys(Handles);
-
-	for (const FDeliveryHandleV3& H : Handles)
-	{
-		if (H.RuntimeGuid == Ctx.RuntimeGuid && H.DeliveryId == DeliveryId)
-		{
-			bAny |= StopGroupInternal(Ctx, H, Reason);
-		}
-	}
-
-	return bAny;
-}
-
-bool UDeliverySubsystemV3::StopByPrimitiveId(const FSpellExecContextV3& Ctx, FName DeliveryId, FName PrimitiveId, EDeliveryStopReasonV3 Reason)
-{
-	bool bAny = false;
-
-	TArray<FDeliveryHandleV3> Handles;
-	ActiveGroups.GetKeys(Handles);
-
-	for (const FDeliveryHandleV3& H : Handles)
-	{
-		if (H.RuntimeGuid != Ctx.RuntimeGuid || H.DeliveryId != DeliveryId)
-		{
-			continue;
-		}
-
-		if (UDeliveryGroupRuntimeV3* Group = ActiveGroups.FindRef(H))
-		{
-			bAny |= StopPrimitiveInGroup(Ctx, Group, PrimitiveId, Reason);
-		}
-	}
-
-	return bAny;
 }
 
 void UDeliverySubsystemV3::GetActiveHandles(TArray<FDeliveryHandleV3>& Out) const
 {
 	Out.Reset();
 	ActiveGroups.GetKeys(Out);
-}
-
-TObjectPtr<UDeliveryDriverBaseV3> UDeliverySubsystemV3::CreateDriverForKind(EDeliveryKindV3 Kind)
-{
-	switch (Kind)
-	{
-		case EDeliveryKindV3::InstantQuery: return NewObject<UDeliveryDriver_InstantQueryV3>(this);
-		case EDeliveryKindV3::Field:        return NewObject<UDeliveryDriver_FieldV3>(this);
-		case EDeliveryKindV3::Mover:        return NewObject<UDeliveryDriver_MoverV3>(this);
-		case EDeliveryKindV3::Beam:         return NewObject<UDeliveryDriver_BeamV3>(this);
-		default: break;
-	}
-	return nullptr;
-}
-
-int32 UDeliverySubsystemV3::AllocateInstanceIndex(const FGuid& RuntimeGuid, FName DeliveryId)
-{
-	int32& Next = NextInstanceByRuntimeAndId.FindOrAdd(RuntimeGuid).FindOrAdd(DeliveryId);
-	const int32 Result = Next;
-	Next++;
-	return Result;
-}
-
-int32 UDeliverySubsystemV3::ComputeGroupSeed(const FGuid& RuntimeGuid, FName DeliveryId, int32 InstanceIndex) const
-{
-	uint32 H = ::GetTypeHash(RuntimeGuid);
-	H = HashCombineFast32(H, HashName32(DeliveryId));
-	H = HashCombineFast32(H, uint32(InstanceIndex));
-	return int32(H);
-}
-
-void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, float NowSeconds)
-{
-	if (!Group || !GetWorld())
-	{
-		return;
-	}
-
-	const FDeliverySpecV3& Spec = Group->GroupSpec;
-
-	bool bDoEval = false;
-	switch (Spec.PoseUpdatePolicy)
-	{
-		case EDeliveryPoseUpdatePolicyV3::EveryTick:
-			bDoEval = true;
-			break;
-
-		case EDeliveryPoseUpdatePolicyV3::OnStart:
-			bDoEval = (Group->RigCache.EmittersWS.Num() == 0);
-			break;
-
-		case EDeliveryPoseUpdatePolicyV3::Interval:
-		default:
-		{
-			const float Interval = FMath::Max(0.f, Spec.PoseUpdateInterval);
-			if (Interval <= 0.f)
-			{
-				bDoEval = true;
-				break;
-			}
-
-			const float* Last = LastRigEvalTimeByHandle.Find(Group->GroupHandle);
-			if (!Last)
-			{
-				bDoEval = true;
-			}
-			else
-			{
-				bDoEval = (NowSeconds - *Last) >= Interval;
-			}
-			break;
-		}
-	}
-
-	if (!bDoEval)
-	{
-		return;
-	}
-
-	FDeliveryRigEvalResultV3 Eval;
-	FDeliveryRigEvaluatorV3::Evaluate(
-		GetWorld(),
-		Group->CtxSnapshot.Caster.Get(),
-		Spec.Attach,
-		Spec.Rig,
-		NowSeconds - Group->StartTimeSeconds,
-		Eval);
-
-	Group->RigCache.RootWS = Eval.RootWorld;
-	Group->RigCache.EmittersWS = Eval.EmittersWorld;
-	Group->RigCache.EmitterNames = Eval.EmitterNames;
-
-	LastRigEvalTimeByHandle.Add(Group->GroupHandle, NowSeconds);
-
-	for (auto& Pair : Group->PrimitiveCtxById)
-	{
-		FDeliveryContextV3& PCtx = Pair.Value;
-		PCtx.AnchorPoseWS = ResolveAnchorPoseWS(Group->CtxSnapshot, Group, PCtx);
-		PCtx.FinalPoseWS = PCtx.AnchorPoseWS;
-	}
-}
-
-FTransform UDeliverySubsystemV3::ResolveAnchorPoseWS(const FSpellExecContextV3& /*Ctx*/, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) const
-{
-	if (!Group)
-	{
-		return FTransform::Identity;
-	}
-
-	const FDeliveryAnchorRefV3& A = PrimitiveCtx.Spec.Anchor;
-
-	FTransform Base = Group->RigCache.RootWS;
-	switch (A.Kind)
-	{
-		case EDeliveryAnchorRefKindV3::Root:
-			Base = Group->RigCache.RootWS;
-			break;
-
-		case EDeliveryAnchorRefKindV3::EmitterIndex:
-			if (Group->RigCache.EmittersWS.IsValidIndex(A.EmitterIndex))
-			{
-				Base = Group->RigCache.EmittersWS[A.EmitterIndex];
-			}
-			break;
-
-		default:
-			break;
-	}
-
-	FTransform LocalXf;
-	LocalXf.SetLocation(A.LocalOffset);
-	LocalXf.SetRotation(A.LocalRotation.Quaternion());
-	LocalXf.SetScale3D(A.LocalScale);
-
-	return LocalXf * Base;
-}
-
-void UDeliverySubsystemV3::StopAllForRuntimeGuid(const FGuid& RuntimeGuid, EDeliveryStopReasonV3 Reason)
-{
-	TArray<FDeliveryHandleV3> Handles;
-	ActiveGroups.GetKeys(Handles);
-
-	for (const FDeliveryHandleV3& H : Handles)
-	{
-		if (H.RuntimeGuid != RuntimeGuid)
-		{
-			continue;
-		}
-
-		if (UDeliveryGroupRuntimeV3* Group = ActiveGroups.FindRef(H))
-		{
-			StopGroupInternal(Group->CtxSnapshot, H, Reason);
-		}
-	}
 }
 
 bool UDeliverySubsystemV3::StopPrimitiveInGroup(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, FName PrimitiveId, EDeliveryStopReasonV3 Reason)
@@ -472,16 +378,10 @@ bool UDeliverySubsystemV3::StopPrimitiveInGroup(const FSpellExecContextV3& Ctx, 
 	}
 
 	UDeliveryDriverBaseV3* Driver = Group->DriversByPrimitiveId.FindRef(PrimitiveId);
-	if (!Driver || !Driver->IsActive())
+	if (Driver && Driver->IsActive())
 	{
-		return false;
+		Driver->Stop(Ctx, Group, Reason);
 	}
-
-	Driver->Stop(Ctx, Group, Reason);
-	Driver->bActive = false;
-
-	// Emit primitive stopped
-	Driver->EmitPrimitiveStopped(Ctx, Reason);
 
 	Group->DriversByPrimitiveId.Remove(PrimitiveId);
 	Group->PrimitiveCtxById.Remove(PrimitiveId);
@@ -497,35 +397,79 @@ bool UDeliverySubsystemV3::StopGroupInternal(const FSpellExecContextV3& Ctx, con
 		return false;
 	}
 
-	// Stop primitives
-	for (auto& Pair : Group->DriversByPrimitiveId)
+	// Stop all primitives
+	TArray<FName> PrimIds;
+	Group->DriversByPrimitiveId.GetKeys(PrimIds);
+
+	for (const FName& Pid : PrimIds)
 	{
-		if (UDeliveryDriverBaseV3* Driver = Pair.Value)
-		{
-			if (Driver->IsActive())
-			{
-				Driver->Stop(Ctx, Group, Reason);
-				Driver->bActive = false;
-
-				Driver->EmitPrimitiveStopped(Ctx, Reason);
-			}
-		}
+		StopPrimitiveInGroup(Ctx, Group, Pid, Reason);
 	}
-
-	Group->DriversByPrimitiveId.Reset();
-	Group->PrimitiveCtxById.Reset();
 
 	ActiveGroups.Remove(Handle);
 	LastRigEvalTimeByHandle.Remove(Handle);
 
-	// Emit group stopped
-	{
-		const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
-		EmitDeliveryEvent(Ctx, Tags.Event_Delivery_Stopped, /*Magnitude=*/(float)(int32)Reason);
-	}
-
-	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("StopDelivery: Group %s #%d stopped (Reason=%d)"),
+	UE_LOG(LogIMOPDeliveryV3, Log, TEXT("Delivery group stopped: %s inst=%d reason=%d"),
 		*Handle.DeliveryId.ToString(), Handle.InstanceIndex, (int32)Reason);
 
 	return true;
+}
+
+bool UDeliverySubsystemV3::StopDelivery(const FSpellExecContextV3& Ctx, const FDeliveryHandleV3& Handle, EDeliveryStopReasonV3 Reason)
+{
+	return StopGroupInternal(Ctx, Handle, Reason);
+}
+
+bool UDeliverySubsystemV3::StopById(const FSpellExecContextV3& Ctx, FName DeliveryId, EDeliveryStopReasonV3 Reason)
+{
+	TArray<FDeliveryHandleV3> Handles;
+	ActiveGroups.GetKeys(Handles);
+
+	bool bAny = false;
+	for (const FDeliveryHandleV3& H : Handles)
+	{
+		if (H.DeliveryId == DeliveryId)
+		{
+			bAny |= StopGroupInternal(Ctx, H, Reason);
+		}
+	}
+	return bAny;
+}
+
+bool UDeliverySubsystemV3::StopByPrimitiveId(const FSpellExecContextV3& Ctx, FName DeliveryId, FName PrimitiveId, EDeliveryStopReasonV3 Reason)
+{
+	TArray<FDeliveryHandleV3> Handles;
+	ActiveGroups.GetKeys(Handles);
+
+	for (const FDeliveryHandleV3& H : Handles)
+	{
+		if (H.DeliveryId != DeliveryId)
+		{
+			continue;
+		}
+
+		if (UDeliveryGroupRuntimeV3* Group = ActiveGroups.FindRef(H))
+		{
+			return StopPrimitiveInGroup(Ctx, Group, PrimitiveId, Reason);
+		}
+	}
+	return false;
+}
+
+void UDeliverySubsystemV3::StopAllForRuntimeGuid(const FGuid& RuntimeGuid, EDeliveryStopReasonV3 Reason)
+{
+	TArray<FDeliveryHandleV3> Handles;
+	ActiveGroups.GetKeys(Handles);
+
+	for (const FDeliveryHandleV3& H : Handles)
+	{
+		if (H.RuntimeGuid == RuntimeGuid)
+		{
+			if (UDeliveryGroupRuntimeV3* Group = ActiveGroups.FindRef(H))
+			{
+				const FSpellExecContextV3& Ctx = Group->CtxSnapshot;
+				StopGroupInternal(Ctx, H, Reason);
+			}
+		}
+	}
 }

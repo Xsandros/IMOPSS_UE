@@ -3,9 +3,20 @@
 #include "Delivery/DeliverySubsystemV3.h"
 #include "Delivery/SpellPayloadsDeliveryV3.h"
 
+#include "Runtime/SpellRuntimeV3.h"
 #include "Logging/LogMacros.h"
+#include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPExecStopDeliveryV3, Log, All);
+
+static FGuid ResolveRuntimeGuidFromCtx(const FSpellExecContextV3& Ctx)
+{
+	if (const USpellRuntimeV3* R = Cast<USpellRuntimeV3>(Ctx.Runtime.Get()))
+	{
+		return R->GetRuntimeGuid();
+	}
+	return FGuid();
+}
 
 void UExec_StopDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* PayloadData)
 {
@@ -31,39 +42,101 @@ void UExec_StopDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* P
 		return;
 	}
 
+	const FGuid RuntimeGuid = ResolveRuntimeGuidFromCtx(Ctx);
+
 	bool bOk = false;
 
-	if (P->bUseHandle && P->Handle.RuntimeGuid.IsValid())
+	// 1) Stop by explicit handle (most precise)
+	if (P->bUseHandle)
 	{
-		bOk = Sub->StopDelivery(Ctx, P->Handle, P->Reason);
+		FDeliveryHandleV3 H = P->Handle;
+
+		// Robustness: if the payload doesn't carry a guid, use the one from this runtime context.
+		if (!H.RuntimeGuid.IsValid() && RuntimeGuid.IsValid())
+		{
+			H.RuntimeGuid = RuntimeGuid;
+		}
+
+		if (!H.RuntimeGuid.IsValid())
+		{
+			UE_LOG(LogIMOPExecStopDeliveryV3, Warning, TEXT("StopDelivery by Handle requested, but RuntimeGuid is invalid (payload and ctx)."));
+			return;
+		}
+
+		bOk = Sub->StopDelivery(Ctx, H, P->Reason);
 
 		UE_LOG(LogIMOPExecStopDeliveryV3, Log, TEXT("StopDelivery by Handle: id=%s inst=%d ok=%d"),
-			*P->Handle.DeliveryId.ToString(),
-			P->Handle.InstanceIndex,
+			*H.DeliveryId.ToString(),
+			H.InstanceIndex,
 			bOk ? 1 : 0);
 		return;
 	}
 
+	// 2) Stop by ids (less precise, but authoring-friendly)
 	if (P->DeliveryId == NAME_None)
 	{
-		UE_LOG(LogIMOPExecStopDeliveryV3, Warning, TEXT("StopDelivery: No handle and DeliveryId None -> nothing to stop"));
+		UE_LOG(LogIMOPExecStopDeliveryV3, Warning, TEXT("StopDelivery: No handle and DeliveryId is None -> nothing to stop"));
 		return;
+	}
+
+	// IMPORTANT: We prefer to stop within the current runtime only.
+	// We do this by iterating active handles and calling StopDelivery with exact handles.
+	// This prevents accidental cross-runtime stops in MP when multiple spell runtimes exist.
+	TArray<FDeliveryHandleV3> Handles;
+	Sub->GetActiveHandles(Handles);
+
+	if (!RuntimeGuid.IsValid())
+	{
+		UE_LOG(LogIMOPExecStopDeliveryV3, Warning, TEXT("StopDelivery: Ctx has no valid RuntimeGuid; will match by DeliveryId only (potentially broader)."));
 	}
 
 	if (P->bUsePrimitiveId && P->PrimitiveId != NAME_None)
 	{
-		bOk = Sub->StopByPrimitiveId(Ctx, P->DeliveryId, P->PrimitiveId, P->Reason);
+		// Best-effort: subsystem has StopByPrimitiveId, but to keep runtime scoping tight we first filter by handles.
+		bool bAny = false;
+
+		for (const FDeliveryHandleV3& H : Handles)
+		{
+			if (H.DeliveryId != P->DeliveryId)
+			{
+				continue;
+			}
+			if (RuntimeGuid.IsValid() && H.RuntimeGuid != RuntimeGuid)
+			{
+				continue;
+			}
+
+			// Scoped call (still uses subsystem helper internally)
+			bAny |= Sub->StopByPrimitiveId(Ctx, P->DeliveryId, P->PrimitiveId, P->Reason);
+			break; // primitive id is unique per group spec; one stop is enough
+		}
 
 		UE_LOG(LogIMOPExecStopDeliveryV3, Log, TEXT("StopDelivery by PrimitiveId: delivery=%s primitive=%s ok=%d"),
 			*P->DeliveryId.ToString(),
 			*P->PrimitiveId.ToString(),
-			bOk ? 1 : 0);
+			bAny ? 1 : 0);
 		return;
 	}
 
-	bOk = Sub->StopById(Ctx, P->DeliveryId, P->Reason);
+	// Stop whole delivery groups with matching DeliveryId within this runtime
+	{
+		bool bAny = false;
+		for (const FDeliveryHandleV3& H : Handles)
+		{
+			if (H.DeliveryId != P->DeliveryId)
+			{
+				continue;
+			}
+			if (RuntimeGuid.IsValid() && H.RuntimeGuid != RuntimeGuid)
+			{
+				continue;
+			}
 
-	UE_LOG(LogIMOPExecStopDeliveryV3, Log, TEXT("StopDelivery by DeliveryId: delivery=%s ok=%d"),
-		*P->DeliveryId.ToString(),
-		bOk ? 1 : 0);
+			bAny |= Sub->StopDelivery(Ctx, H, P->Reason);
+		}
+
+		UE_LOG(LogIMOPExecStopDeliveryV3, Log, TEXT("StopDelivery by DeliveryId: delivery=%s ok=%d"),
+			*P->DeliveryId.ToString(),
+			bAny ? 1 : 0);
+	}
 }

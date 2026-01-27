@@ -3,9 +3,9 @@
 #include "Delivery/DeliverySubsystemV3.h"
 #include "Delivery/SpellPayloadsDeliveryV3.h"
 
-#include "Core/SpellExecContextHelpersV3.h"
 #include "Runtime/SpellRuntimeV3.h"
 #include "Logging/LogMacros.h"
+#include "Engine/World.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogIMOPExecStartDeliveryV3, Log, All);
 
@@ -33,6 +33,20 @@ void UExec_StartDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* 
 		return;
 	}
 
+	if (P->Spec.DeliveryId == NAME_None)
+	{
+		UE_LOG(LogIMOPExecStartDeliveryV3, Error, TEXT("StartDelivery: Spec.DeliveryId is None"));
+		return;
+	}
+
+	// Composite-first sanity
+	if (P->Spec.Primitives.Num() <= 0)
+	{
+		UE_LOG(LogIMOPExecStartDeliveryV3, Error, TEXT("StartDelivery: Spec.Primitives is empty (Composite-first). DeliveryId=%s"),
+			*P->Spec.DeliveryId.ToString());
+		return;
+	}
+
 	FDeliveryHandleV3 Handle;
 	const bool bOk = Sub->StartDelivery(Ctx, P->Spec, Handle);
 
@@ -41,6 +55,5 @@ void UExec_StartDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* 
 		bOk ? 1 : 0,
 		Handle.InstanceIndex);
 
-	// Optional: if you want to store the handle in VariableStore later, do it in a dedicated Exec
-	// (keeps this executor deterministic and simple).
+	// NOTE: storing the handle in VariableStore should be a dedicated Exec (keeps this deterministic + simple)
 }

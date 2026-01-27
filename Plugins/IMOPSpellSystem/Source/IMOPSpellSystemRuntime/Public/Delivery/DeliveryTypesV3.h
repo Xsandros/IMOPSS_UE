@@ -84,22 +84,47 @@ struct FDeliveryHandleV3
 
 	friend bool operator==(const FDeliveryHandleV3& A, const FDeliveryHandleV3& B)
 	{
-		return A.RuntimeGuid == B.RuntimeGuid && A.DeliveryId == B.DeliveryId && A.InstanceIndex == B.InstanceIndex;
+		return A.RuntimeGuid == B.RuntimeGuid
+			&& A.DeliveryId == B.DeliveryId
+			&& A.InstanceIndex == B.InstanceIndex;
 	}
 };
 
+// Self-contained hash (does NOT rely on engine GetTypeHash(FGuid/FName) visibility)
 FORCEINLINE uint32 GetTypeHash(const FDeliveryHandleV3& H)
 {
-	// RuntimeGuid kann invalid sein, aber hashbar.
-	uint32 X = ::GetTypeHash(H.RuntimeGuid);
-	X = HashCombine(X, ::GetTypeHash(H.DeliveryId));
-	X = HashCombine(X, ::GetTypeHash(H.InstanceIndex));
-	return X;
-}
+	auto Mix32 = [](uint32 X) -> uint32
+	{
+		X ^= X >> 16;
+		X *= 0x7feb352du;
+		X ^= X >> 15;
+		X *= 0x846ca68bu;
+		X ^= X >> 16;
+		return X;
+	};
 
-FORCEINLINE uint32 GetTypeHash(const FDeliveryPrimitiveHandleV3& H)
-{
-	return HashCombine(GetTypeHash(H.Group), ::GetTypeHash(H.PrimitiveId));
+	auto CombineLocal = [&](uint32 A, uint32 B) -> uint32
+	{
+		// Same spirit as UE HashCombine, but fully local
+		return Mix32(A ^ (B + 0x9e3779b9u + (A << 6) + (A >> 2)));
+	};
+
+	uint32 X = 0;
+
+	// FGuid: hash components directly (A/B/C/D are uint32)
+	X = CombineLocal(X, Mix32(static_cast<uint32>(H.RuntimeGuid.A)));
+	X = CombineLocal(X, Mix32(static_cast<uint32>(H.RuntimeGuid.B)));
+	X = CombineLocal(X, Mix32(static_cast<uint32>(H.RuntimeGuid.C)));
+	X = CombineLocal(X, Mix32(static_cast<uint32>(H.RuntimeGuid.D)));
+
+	// FName: use stable parts (ComparisonIndex + Number)
+	X = CombineLocal(X, Mix32(static_cast<uint32>(H.DeliveryId.GetComparisonIndex().ToUnstableInt())));
+	X = CombineLocal(X, Mix32(static_cast<uint32>(H.DeliveryId.GetNumber())));
+
+	// InstanceIndex
+	X = CombineLocal(X, Mix32(static_cast<uint32>(H.InstanceIndex)));
+
+	return X;
 }
 
 
@@ -122,43 +147,10 @@ struct FDeliveryPrimitiveHandleV3
 
 FORCEINLINE uint32 GetTypeHash(const FDeliveryPrimitiveHandleV3& H)
 {
-	return HashCombine(GetTypeHash(H.Group), ::GetTypeHash(H.PrimitiveId));
-}
-
-
-// IMPORTANT: TMap key hashing (must not rely on GetTypeHash(FGuid) visibility)
-FORCEINLINE uint32 GetTypeHash(const FDeliveryHandleV3& H)
-{
-	// Local, self-contained mixing (no engine overload dependencies)
-	auto HashU32 = [](uint32 X) -> uint32
-	{
-		X ^= X >> 16;
-		X *= 0x7feb352du;
-		X ^= X >> 15;
-		X *= 0x846ca68bu;
-		X ^= X >> 16;
-		return X;
-	};
-
-	auto HashCombineLocal = [&](uint32 A, uint32 B) -> uint32
-	{
-		return HashU32(A ^ (B + 0x9e3779b9u + (A << 6) + (A >> 2)));
-	};
-
-	uint32 X = 0;
-	// Hash Guid components directly
-	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.A));
-	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.B));
-	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.C));
-	X = HashCombineLocal(X, HashU32((uint32)H.RuntimeGuid.D));
-
-	// FName hashing: avoid ::GetTypeHash(FName) if you want, but it is usually safe.
-	// We'll still avoid it to keep this self-contained:
-	X = HashCombineLocal(X, HashU32((uint32)H.DeliveryId.GetComparisonIndex().ToUnstableInt()));
-	X = HashCombineLocal(X, HashU32((uint32)H.DeliveryId.GetNumber()));
-
-	X = HashCombineLocal(X, HashU32((uint32)H.InstanceIndex));
-	return X;
+	// Now safe because FDeliveryPrimitiveHandleV3 is fully defined above
+	const uint32 A = GetTypeHash(H.Group);
+	const uint32 B = static_cast<uint32>(H.PrimitiveId.GetComparisonIndex().ToUnstableInt()) ^ (static_cast<uint32>(H.PrimitiveId.GetNumber()) * 16777619u);
+	return HashCombine(A, B);
 }
 
 // ============================================================

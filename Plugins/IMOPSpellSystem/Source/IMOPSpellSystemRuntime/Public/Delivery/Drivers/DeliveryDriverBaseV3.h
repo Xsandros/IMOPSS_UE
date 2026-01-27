@@ -93,11 +93,10 @@ protected:
 
 		// Always include identity tags (very useful for debugging, stop policies later)
 		Ev.Tags = ExtraTags;
-		Ev.Tags.AddTag(FGameplayTag::RequestGameplayTag(FName("Spell.Delivery")));
-		Ev.Tags.AddTag(FGameplayTag::RequestGameplayTag(FName("Spell.Delivery.DeliveryId")));
-		// Encode names in tags is not ideal; we keep it minimal: rely on Trace/Blackboard later.
-		// For now, add "semantic" tags if they exist in your tag list:
-		// (No hard dependency here.)
+
+		// NOTE (Context Route): Do NOT request/append gameplay tags like Spell.Delivery.* here.
+		// Delivery identity is carried via Ev.DeliveryHandle / Ev.DeliveryPrimitiveId.
+
 
 		// NEW: delivery identity
 		Ev.DeliveryHandle = GroupHandle;

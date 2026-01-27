@@ -53,6 +53,39 @@ void FDeliveryBlackboardV3::InitFromSpec(const FDeliveryBlackboardInitSpecV3& In
 		KR.Value = FDeliveryBBValueV3();
 		Keys.Add(K.Key, KR);
 	}
+	
+	// If spec provides no keys, install a minimal default set (still deterministic).
+	if (Keys.Num() == 0)
+	{
+		// Time.Elapsed (float) – written by System during Time phase
+		{
+			FDeliveryBBKeySpecV3 K;
+			K.Key = FName(TEXT("Time.Elapsed"));
+			K.Type = EDeliveryBBValueTypeV3::Float;
+			K.Owner = EDeliveryBBOwnerV3::System;
+			K.WritePhaseMask = PhaseBit(EDeliveryBBPhaseV3::Time);
+
+			FDeliveryBBKeyRuntimeV3 KR;
+			KR.Spec = K;
+			KR.Value = FDeliveryBBValueV3();
+			Keys.Add(K.Key, KR);
+		}
+
+		// Time.Delta (float) – optional but useful
+		{
+			FDeliveryBBKeySpecV3 K;
+			K.Key = FName(TEXT("Time.Delta"));
+			K.Type = EDeliveryBBValueTypeV3::Float;
+			K.Owner = EDeliveryBBOwnerV3::System;
+			K.WritePhaseMask = PhaseBit(EDeliveryBBPhaseV3::Time);
+
+			FDeliveryBBKeyRuntimeV3 KR;
+			KR.Spec = K;
+			KR.Value = FDeliveryBBValueV3();
+			Keys.Add(K.Key, KR);
+		}
+	}
+
 
 	CurrentPhase = EDeliveryBBPhaseV3::Time;
 	bInitialized = true;

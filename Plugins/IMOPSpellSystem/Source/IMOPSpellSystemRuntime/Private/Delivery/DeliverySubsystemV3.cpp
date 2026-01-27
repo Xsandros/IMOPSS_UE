@@ -345,14 +345,32 @@ void UDeliverySubsystemV3::Tick(float DeltaSeconds)
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::PrimitiveMotion);
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Query);
 
-		for (auto& Pair : Group->DriversByPrimitiveId)
+		TArray<FName> PrimIds;
+		PrimIds.Reserve(Group->DriversByPrimitiveId.Num());
+		Group->DriversByPrimitiveId.GetKeys(PrimIds);
+
+		// Optional: deterministisch nach PrimitiveIndex sortieren
+		PrimIds.Sort([&](const FName& A, const FName& B)
 		{
-			UDeliveryDriverBaseV3* Driver = Pair.Value;
-			if (Driver && Driver->IsActive())
+			const FDeliveryContextV3* CA = Group->PrimitiveCtxById.Find(A);
+			const FDeliveryContextV3* CB = Group->PrimitiveCtxById.Find(B);
+			const int32 IA = CA ? CA->PrimitiveIndex : 0;
+			const int32 IB = CB ? CB->PrimitiveIndex : 0;
+			if (IA != IB) return IA < IB;
+			return A.LexicalLess(B);
+		});
+
+		for (const FName& PrimId : PrimIds)
+		{
+			UDeliveryDriverBaseV3* Driver = Group->DriversByPrimitiveId.FindRef(PrimId);
+			if (!Driver || !Driver->IsActive())
 			{
-				Driver->Tick(Ctx, Group, DeltaSeconds);
+				continue;
 			}
+
+			Driver->Tick(Ctx, Group, DeltaSeconds);
 		}
+
 
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Stop);
 		Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Commit);
@@ -887,7 +905,7 @@ bool UDeliverySubsystemV3::StopPrimitiveInGroup(const FSpellExecContextV3& Ctx, 
 		Group->DriversByPrimitiveId.Remove(PrimitiveId);
 		Group->PrimitiveCtxById.Remove(PrimitiveId);
 
-		// ===== Modell 1: Wenn keine Primitives mehr leben, Group cleanup =====
+		// Modell 1: wenn keine Primitives mehr leben, Group cleanup
 		if (Group->DriversByPrimitiveId.Num() == 0)
 		{
 			const FDeliveryHandleV3 Handle = Group->GroupHandle;
@@ -896,6 +914,7 @@ bool UDeliverySubsystemV3::StopPrimitiveInGroup(const FSpellExecContextV3& Ctx, 
 		}
 
 		return true;
+
 	}
 
 	return false;

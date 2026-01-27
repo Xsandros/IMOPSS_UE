@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
+#include "Delivery/Motion/DeliveryMotionTypesV3.h"
 
 #include "Delivery/DeliveryTypesV3.h"
 
@@ -276,6 +277,11 @@ struct FDeliveryPrimitiveSpecV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryAnchorRefV3 Anchor;
+	
+	// Endformat: multiple motions allowed. Implementation currently applies only Motions[0].
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	TArray<FDeliveryMotionSpecV3> Motions;
+
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	EDeliveryMissingAnchorPolicyV3 OnMissingAnchor = EDeliveryMissingAnchorPolicyV3::FallbackToRoot;

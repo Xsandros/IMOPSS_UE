@@ -2,6 +2,7 @@
 
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
+#include "Delivery/Motion/DeliveryMotionTypesV3.h"
 
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
 #include "Delivery/Drivers/DeliveryDriver_InstantQueryV3.h"
@@ -66,6 +67,216 @@ static FGuid ResolveRuntimeGuidFromCtx(const FSpellExecContextV3& Ctx)
 	return FGuid();
 }
 
+static FVector RotateVectorByBasis(const FVector& V, const FTransform& Basis)
+{
+	return Basis.GetRotation().RotateVector(V);
+}
+
+static float EaseValue(float T01, EDeliveryEaseV3 Ease)
+{
+	T01 = FMath::Clamp(T01, 0.f, 1.f);
+	switch (Ease)
+	{
+	case EDeliveryEaseV3::SmoothStep:
+		return T01 * T01 * (3.f - 2.f * T01);
+	default:
+		return T01;
+	}
+}
+
+static FTransform ApplyPolicyMask(const FTransform& BaseWS, const FTransform& CandidateWS, EDeliveryMotionApplyPolicyV3 Policy, float Weight)
+{
+	Weight = FMath::Clamp(Weight, 0.f, 1.f);
+
+	// Blend components selectively. We blend towards Candidate based on Weight.
+	FVector T = FMath::Lerp(BaseWS.GetTranslation(), CandidateWS.GetTranslation(), Weight);
+	FQuat   R = FQuat::Slerp(BaseWS.GetRotation(), CandidateWS.GetRotation(), Weight);
+	FVector S = FMath::Lerp(BaseWS.GetScale3D(), CandidateWS.GetScale3D(), Weight);
+
+	switch (Policy)
+	{
+	case EDeliveryMotionApplyPolicyV3::TranslateOnly:
+		return FTransform(BaseWS.GetRotation(), T, BaseWS.GetScale3D());
+	case EDeliveryMotionApplyPolicyV3::RotateOnly:
+		return FTransform(R, BaseWS.GetTranslation(), BaseWS.GetScale3D());
+	case EDeliveryMotionApplyPolicyV3::ScaleOnly:
+		return FTransform(BaseWS.GetRotation(), BaseWS.GetTranslation(), S);
+	case EDeliveryMotionApplyPolicyV3::TranslateRotate:
+		return FTransform(R, T, BaseWS.GetScale3D());
+	case EDeliveryMotionApplyPolicyV3::TranslateScale:
+		return FTransform(BaseWS.GetRotation(), T, S);
+	case EDeliveryMotionApplyPolicyV3::RotateScale:
+		return FTransform(R, BaseWS.GetTranslation(), S);
+	case EDeliveryMotionApplyPolicyV3::Multiply:
+	default:
+		return FTransform(R, T, S); // full blend result
+	}
+}
+
+static float PseudoNoise01(float X)
+{
+    // deterministic pseudo noise in [0..1]
+    return 0.5f + 0.5f * FMath::Sin(X);
+}
+
+static FVector PseudoNoiseVec(const float T, const int32 Seed)
+{
+    const float S = (float)Seed * 0.01337f;
+    return FVector(
+        PseudoNoise01(T * 3.1f + S + 10.0f) * 2.f - 1.f,
+        PseudoNoise01(T * 4.7f + S + 20.0f) * 2.f - 1.f,
+        PseudoNoise01(T * 2.3f + S + 30.0f) * 2.f - 1.f
+    );
+}
+
+static FTransform EvalMotionDelta(
+    const FDeliveryMotionSpecV3& M,
+    const float Elapsed,
+    const int32 Seed,
+    const FTransform& AnchorWS,
+    const FTransform& BaseWS)
+{
+    if (!M.bEnabled || !M.Payload.IsValid())
+    {
+        return FTransform::Identity;
+    }
+
+    const UScriptStruct* S = M.Payload.GetScriptStruct();
+
+    // 1) Linear velocity
+    if (S == FDeliveryMotion_LinearVelocityV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_LinearVelocityV3>();
+
+        FVector V = P.Velocity;
+        if (P.bVelocityInSpaceBasis)
+        {
+            if (M.Space == EDeliveryMotionSpaceV3::Local)
+                V = RotateVectorByBasis(V, BaseWS);
+            else if (M.Space == EDeliveryMotionSpaceV3::Anchor)
+                V = RotateVectorByBasis(V, AnchorWS);
+            // World: unchanged
+        }
+
+        return FTransform(FQuat::Identity, V * Elapsed, FVector::OneVector);
+    }
+
+    // 2) Acceleration
+    if (S == FDeliveryMotion_AccelerationV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_AccelerationV3>();
+
+        FVector V0 = P.InitialVelocity;
+        FVector A  = P.Acceleration;
+
+        if (M.Space == EDeliveryMotionSpaceV3::Local)
+        {
+            V0 = RotateVectorByBasis(V0, BaseWS);
+            A  = RotateVectorByBasis(A, BaseWS);
+        }
+        else if (M.Space == EDeliveryMotionSpaceV3::Anchor)
+        {
+            V0 = RotateVectorByBasis(V0, AnchorWS);
+            A  = RotateVectorByBasis(A, AnchorWS);
+        }
+
+        const FVector Offset = (V0 * Elapsed) + (0.5f * A * Elapsed * Elapsed);
+        return FTransform(FQuat::Identity, Offset, FVector::OneVector);
+    }
+
+    // 3) Orbit
+    if (S == FDeliveryMotion_OrbitV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_OrbitV3>();
+        const float AngleRad = FMath::DegreesToRadians(P.PhaseDeg + P.AngularSpeedDeg * Elapsed);
+
+        FVector Axis = P.Axis.GetSafeNormal();
+        if (Axis.IsNearlyZero()) Axis = FVector(0,0,1);
+
+        // Build an orthonormal basis around Axis deterministically
+        FVector U = FVector::CrossProduct(Axis, FVector(1,0,0));
+        if (U.IsNearlyZero()) U = FVector::CrossProduct(Axis, FVector(0,1,0));
+        U.Normalize();
+        FVector V = FVector::CrossProduct(Axis, U).GetSafeNormal();
+
+        FVector LocalOffset = (U * FMath::Cos(AngleRad) + V * FMath::Sin(AngleRad)) * P.Radius;
+
+        if (M.Space == EDeliveryMotionSpaceV3::Local)
+            LocalOffset = RotateVectorByBasis(LocalOffset, BaseWS);
+        else if (M.Space == EDeliveryMotionSpaceV3::Anchor)
+            LocalOffset = RotateVectorByBasis(LocalOffset, AnchorWS);
+
+        return FTransform(FQuat::Identity, LocalOffset, FVector::OneVector);
+    }
+
+    // 4) Spin
+    if (S == FDeliveryMotion_SpinV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_SpinV3>();
+        const FRotator R = P.AngularVelocityDeg * Elapsed;
+        return FTransform(R.Quaternion(), FVector::ZeroVector, FVector::OneVector);
+    }
+
+    // 5) Sine offset
+    if (S == FDeliveryMotion_SineOffsetV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_SineOffsetV3>();
+        const float W = 2.f * PI * FMath::Max(0.f, P.FrequencyHz);
+        const float Sine = FMath::Sin(W * Elapsed + P.Phase);
+        FVector Off = P.Amplitude * Sine;
+
+        if (M.Space == EDeliveryMotionSpaceV3::Local)
+            Off = RotateVectorByBasis(Off, BaseWS);
+        else if (M.Space == EDeliveryMotionSpaceV3::Anchor)
+            Off = RotateVectorByBasis(Off, AnchorWS);
+
+        return FTransform(FQuat::Identity, Off, FVector::OneVector);
+    }
+
+    // 6) Sine scale
+    if (S == FDeliveryMotion_SineScaleV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_SineScaleV3>();
+        const float W = 2.f * PI * FMath::Max(0.f, P.FrequencyHz);
+        const float Sine = FMath::Sin(W * Elapsed + P.Phase);
+        const float Scale = 1.f + (P.Amplitude * Sine);
+        return FTransform(FQuat::Identity, FVector::ZeroVector, FVector(Scale));
+    }
+
+    // 7) Noise offset (deterministic)
+    if (S == FDeliveryMotion_NoiseOffsetV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_NoiseOffsetV3>();
+        const float W = 2.f * PI * FMath::Max(0.f, P.FrequencyHz);
+        const FVector N = PseudoNoiseVec(W * Elapsed, Seed);
+        FVector Off = FVector(N.X * P.Amplitude.X, N.Y * P.Amplitude.Y, N.Z * P.Amplitude.Z);
+
+        if (M.Space == EDeliveryMotionSpaceV3::Local)
+            Off = RotateVectorByBasis(Off, BaseWS);
+        else if (M.Space == EDeliveryMotionSpaceV3::Anchor)
+            Off = RotateVectorByBasis(Off, AnchorWS);
+
+        return FTransform(FQuat::Identity, Off, FVector::OneVector);
+    }
+
+    // 8) Timed lerp offset
+    if (S == FDeliveryMotion_LerpOffsetV3::StaticStruct())
+    {
+        const auto& P = M.Payload.Get<FDeliveryMotion_LerpOffsetV3>();
+        const float D = FMath::Max(KINDA_SMALL_NUMBER, P.Duration);
+        const float Alpha = EaseValue(Elapsed / D, P.Ease);
+        FVector Off = FMath::Lerp(P.From, P.To, Alpha);
+
+        if (M.Space == EDeliveryMotionSpaceV3::Local)
+            Off = RotateVectorByBasis(Off, BaseWS);
+        else if (M.Space == EDeliveryMotionSpaceV3::Anchor)
+            Off = RotateVectorByBasis(Off, AnchorWS);
+
+        return FTransform(FQuat::Identity, Off, FVector::OneVector);
+    }
+
+    return FTransform::Identity;
+}
 
 
 // ------------------------------------------------------------
@@ -564,12 +775,51 @@ void UDeliverySubsystemV3::ResolveAllPrimitivePoses(
                 }
             }
 
-            // Apply local anchor offset
-            const FDeliveryAnchorRefV3& A = PCtx->Spec.Anchor;
-            const FTransform LocalXf(FQuat(A.LocalRotation), A.LocalOffset, A.LocalScale);
+        	const FDeliveryAnchorRefV3& A = PCtx->Spec.Anchor;
+        	const FTransform LocalXf(FQuat(A.LocalRotation), A.LocalOffset, A.LocalScale);
 
-            PCtx->AnchorPoseWS = AnchorWS;
-            PCtx->FinalPoseWS = LocalXf * PCtx->AnchorPoseWS;
+        	// Base pose (keep your established multiplication order)
+        	const FTransform BaseWS = LocalXf * AnchorWS;
+
+        	// Motion[0] (endformat array, implementation uses only [0])
+        	FTransform FinalWS = BaseWS;
+
+        	if (PCtx->Spec.Motions.Num() > 0)
+        	{
+        		const FDeliveryMotionSpecV3& M0 = PCtx->Spec.Motions[0];
+        		if (M0.bEnabled)
+        		{
+        			const float Elapsed = NowSeconds - Group->StartTimeSeconds;
+
+        			// Evaluate delta
+        			const FTransform Delta = EvalMotionDelta(M0, Elapsed, PCtx->Seed, AnchorWS, BaseWS);
+
+        			// Apply depending on space
+        			FTransform CandidateWS = BaseWS;
+        			switch (M0.Space)
+        			{
+        			case EDeliveryMotionSpaceV3::Local:
+        				CandidateWS = Delta * BaseWS;
+        				break;
+
+        			case EDeliveryMotionSpaceV3::Anchor:
+        				// Apply delta to anchor first, then local
+        				CandidateWS = LocalXf * (Delta * AnchorWS);
+        				break;
+
+        			case EDeliveryMotionSpaceV3::World:
+        			default:
+        				CandidateWS = Delta * BaseWS;
+        				break;
+        			}
+
+        			FinalWS = ApplyPolicyMask(BaseWS, CandidateWS, M0.ApplyPolicy, M0.Weight);
+        		}
+        	}
+
+        	PCtx->AnchorPoseWS = AnchorWS;
+        	PCtx->FinalPoseWS = FinalWS;
+
 
             bAnyUpdated = true;
         }

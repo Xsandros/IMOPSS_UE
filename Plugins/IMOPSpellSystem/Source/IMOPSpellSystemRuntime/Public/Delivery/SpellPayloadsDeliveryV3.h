@@ -36,6 +36,13 @@ struct FPayload_DeliveryStopV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
 	FDeliveryHandleV3 Handle;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FDeliveryPrimitiveHandleV3 PrimitiveHandle;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	bool bUsePrimitiveHandle = false;
+
 
 	// Fallback stop by id
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")

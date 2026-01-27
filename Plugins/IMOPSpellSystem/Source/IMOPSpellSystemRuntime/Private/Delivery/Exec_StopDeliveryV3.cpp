@@ -46,6 +46,46 @@ void UExec_StopDeliveryV3::Execute(const FSpellExecContextV3& Ctx, const void* P
 
 	bool bOk = false;
 
+	// 0) Stop by primitive handle (most precise: group instance + primitive)
+	if (P->bUsePrimitiveHandle)
+	{
+		FDeliveryPrimitiveHandleV3 PH = P->PrimitiveHandle;
+
+		// Robustness: if payload doesn't carry guid, use ctx runtime guid
+		if (!PH.Group.RuntimeGuid.IsValid() && RuntimeGuid.IsValid())
+		{
+			PH.Group.RuntimeGuid = RuntimeGuid;
+		}
+
+		if (!PH.Group.RuntimeGuid.IsValid())
+		{
+			UE_LOG(LogIMOPExecStopDeliveryV3, Warning,
+				TEXT("StopDelivery by PrimitiveHandle requested, but RuntimeGuid is invalid (payload and ctx)."));
+			return;
+		}
+
+		if (PH.Group.DeliveryId == NAME_None)
+		{
+			UE_LOG(LogIMOPExecStopDeliveryV3, Warning,
+				TEXT("StopDelivery by PrimitiveHandle requested, but DeliveryId is None."));
+			return;
+		}
+
+		if (PH.PrimitiveId == NAME_None)
+		{
+			UE_LOG(LogIMOPExecStopDeliveryV3, Warning,
+				TEXT("StopDelivery by PrimitiveHandle requested, but PrimitiveId is None."));
+			return;
+		}
+
+		const bool bStopped = Sub->StopPrimitive(Ctx, PH, P->Reason);
+		UE_LOG(LogIMOPExecStopDeliveryV3, Log,
+			TEXT("StopDelivery by PrimitiveHandle: id=%s inst=%d prim=%s ok=%d"),
+			*PH.Group.DeliveryId.ToString(), PH.Group.InstanceIndex, *PH.PrimitiveId.ToString(), bStopped ? 1 : 0);
+		return;
+	}
+
+	
 	// 1) Stop by explicit handle (most precise)
 	if (P->bUseHandle)
 	{

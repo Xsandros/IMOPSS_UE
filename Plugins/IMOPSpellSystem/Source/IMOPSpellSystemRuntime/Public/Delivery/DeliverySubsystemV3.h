@@ -50,6 +50,10 @@ public:
 	bool StopByPrimitiveId(const FSpellExecContextV3& Ctx, FName DeliveryId, FName PrimitiveId, EDeliveryStopReasonV3 Reason);
 
 	void GetActiveHandles(TArray<FDeliveryHandleV3>& Out) const;
+	
+	UFUNCTION(BlueprintCallable, Category="Delivery")
+	bool StopPrimitive(const FSpellExecContextV3& Ctx, const FDeliveryPrimitiveHandleV3& PrimitiveHandle, EDeliveryStopReasonV3 Reason);
+
 
 private:
 	TObjectPtr<UDeliveryDriverBaseV3> CreateDriverForKind(EDeliveryKindV3 Kind);

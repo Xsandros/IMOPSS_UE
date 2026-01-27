@@ -486,8 +486,18 @@ bool UDeliverySubsystemV3::StopPrimitiveInGroup(const FSpellExecContextV3& Ctx, 
 	{
 		Driver->Stop(Ctx, Group, Reason);
 		Driver->bActive = false;
+
 		Group->DriversByPrimitiveId.Remove(PrimitiveId);
 		Group->PrimitiveCtxById.Remove(PrimitiveId);
+
+		// ===== Modell 1: Wenn keine Primitives mehr leben, Group cleanup =====
+		if (Group->DriversByPrimitiveId.Num() == 0)
+		{
+			const FDeliveryHandleV3 Handle = Group->GroupHandle;
+			LastRigEvalTimeByHandle.Remove(Handle);
+			ActiveGroups.Remove(Handle);
+		}
+
 		return true;
 	}
 
@@ -524,4 +534,20 @@ bool UDeliverySubsystemV3::StopGroupInternal(const FSpellExecContextV3& Ctx, con
 	ActiveGroups.Remove(Handle);
 
 	return true;
+}
+
+bool UDeliverySubsystemV3::StopPrimitive(const FSpellExecContextV3& Ctx, const FDeliveryPrimitiveHandleV3& PrimitiveHandle, EDeliveryStopReasonV3 Reason)
+{
+	if (PrimitiveHandle.PrimitiveId == NAME_None)
+	{
+		return false;
+	}
+
+	UDeliveryGroupRuntimeV3* Group = ActiveGroups.FindRef(PrimitiveHandle.Group);
+	if (!Group)
+	{
+		return false;
+	}
+
+	return StopPrimitiveInGroup(Ctx, Group, PrimitiveHandle.PrimitiveId, Reason);
 }

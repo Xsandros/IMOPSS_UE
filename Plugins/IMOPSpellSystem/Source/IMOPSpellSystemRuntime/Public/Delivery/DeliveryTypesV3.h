@@ -2,6 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
+#include "Misc/Guid.h"
+#include "Templates/TypeHash.h"
 #include "DeliveryTypesV3.generated.h"
 
 // ============================================================
@@ -85,6 +87,44 @@ struct FDeliveryHandleV3
 		return A.RuntimeGuid == B.RuntimeGuid && A.DeliveryId == B.DeliveryId && A.InstanceIndex == B.InstanceIndex;
 	}
 };
+
+FORCEINLINE uint32 GetTypeHash(const FDeliveryHandleV3& H)
+{
+	// RuntimeGuid kann invalid sein, aber hashbar.
+	uint32 X = ::GetTypeHash(H.RuntimeGuid);
+	X = HashCombine(X, ::GetTypeHash(H.DeliveryId));
+	X = HashCombine(X, ::GetTypeHash(H.InstanceIndex));
+	return X;
+}
+
+FORCEINLINE uint32 GetTypeHash(const FDeliveryPrimitiveHandleV3& H)
+{
+	return HashCombine(GetTypeHash(H.Group), ::GetTypeHash(H.PrimitiveId));
+}
+
+
+USTRUCT(BlueprintType)
+struct FDeliveryPrimitiveHandleV3
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FDeliveryHandleV3 Group;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery")
+	FName PrimitiveId = NAME_None;
+
+	friend bool operator==(const FDeliveryPrimitiveHandleV3& A, const FDeliveryPrimitiveHandleV3& B)
+	{
+		return A.Group == B.Group && A.PrimitiveId == B.PrimitiveId;
+	}
+};
+
+FORCEINLINE uint32 GetTypeHash(const FDeliveryPrimitiveHandleV3& H)
+{
+	return HashCombine(GetTypeHash(H.Group), ::GetTypeHash(H.PrimitiveId));
+}
+
 
 // IMPORTANT: TMap key hashing (must not rely on GetTypeHash(FGuid) visibility)
 FORCEINLINE uint32 GetTypeHash(const FDeliveryHandleV3& H)

@@ -42,8 +42,19 @@ UENUM(BlueprintType)
 enum class EDeliveryAnchorRefKindV3 : uint8
 {
 	Root,
-	EmitterIndex
+	EmitterIndex,
+	PrimitiveId, // NEW: anchor to another primitive in the same group
 };
+
+UENUM(BlueprintType)
+enum class EDeliveryMissingAnchorPolicyV3 : uint8
+{
+	Freeze,         // keep last AnchorPoseWS/FinalPoseWS
+	FallbackToRoot, // use group root pose
+	StopSelf,       // stop this primitive (model 1 friendly)
+};
+
+
 
 USTRUCT(BlueprintType)
 struct FDeliveryAnchorRefV3
@@ -55,6 +66,10 @@ struct FDeliveryAnchorRefV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
 	int32 EmitterIndex = 0;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
+	FName TargetPrimitiveId = NAME_None; // NEW (used when Kind == PrimitiveId)
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
 	FVector LocalOffset = FVector::ZeroVector;
@@ -261,6 +276,10 @@ struct FDeliveryPrimitiveSpecV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryAnchorRefV3 Anchor;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	EDeliveryMissingAnchorPolicyV3 OnMissingAnchor = EDeliveryMissingAnchorPolicyV3::FallbackToRoot;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryShapeV3 Shape;

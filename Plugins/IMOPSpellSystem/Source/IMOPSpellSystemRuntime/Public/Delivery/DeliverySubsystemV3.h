@@ -63,7 +63,18 @@ private:
 
 	void EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, float NowSeconds);
 
-	FTransform ResolveAnchorPoseWS(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) const;
+	bool TryResolveAnchorPoseWS(
+		const FSpellExecContextV3& Ctx,
+		UDeliveryGroupRuntimeV3* Group,
+		const FDeliveryContextV3& PrimitiveCtx,
+		FTransform& OutAnchorPoseWS
+	) const;
+
+	void ResolveAllPrimitivePoses(
+		const FSpellExecContextV3& Ctx,
+		UDeliveryGroupRuntimeV3* Group,
+		float NowSeconds
+	);
 
 	void StopAllForRuntimeGuid(const FGuid& RuntimeGuid, EDeliveryStopReasonV3 Reason);
 

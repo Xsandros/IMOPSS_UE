@@ -235,12 +235,14 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Seed = HashCombineFast32(Seed, HashU32_Local((uint32)i));
 		PCtx.Seed = (int32)Seed;
 
-		PCtx.AnchorPoseWS = ResolveAnchorPoseWS(Ctx, Group, PCtx);
+		// Pose will be resolved after all contexts exist (supports PrimitiveId anchors)
+		PCtx.AnchorPoseWS = Group->RigCache.RootWS;
 		const FDeliveryAnchorRefV3& A = PSpec.Anchor;
 		const FTransform LocalXf(FQuat(A.LocalRotation), A.LocalOffset, A.LocalScale);
 		PCtx.FinalPoseWS = LocalXf * PCtx.AnchorPoseWS;
 
 		Group->PrimitiveCtxById.Add(PSpec.PrimitiveId, PCtx);
+
 
 		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(PSpec.Kind);
 		if (!Driver)
@@ -255,9 +257,31 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		Driver->bActive = true;
 
 		Group->DriversByPrimitiveId.Add(PSpec.PrimitiveId, Driver);
-		Driver->Start(Ctx, Group, PCtx);
+		//Driver->Start(Ctx, Group, PCtx);
 	}
 
+	ResolveAllPrimitivePoses(Ctx, Group, Now);
+
+	for (int32 i = 0; i < Spec.Primitives.Num(); ++i)
+	{
+		const FDeliveryPrimitiveSpecV3& PSpec = Spec.Primitives[i];
+		if (PSpec.PrimitiveId == NAME_None) { continue; }
+
+		FDeliveryContextV3* PCtxPtr = Group->PrimitiveCtxById.Find(PSpec.PrimitiveId);
+		if (!PCtxPtr) { continue; }
+
+		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(PSpec.Kind);
+		if (!Driver) { continue; }
+
+		Driver->GroupHandle = Handle;
+		Driver->PrimitiveId = PSpec.PrimitiveId;
+		Driver->bActive = true;
+
+		Group->DriversByPrimitiveId.Add(PSpec.PrimitiveId, Driver);
+		Driver->Start(Ctx, Group, *PCtxPtr);
+	}
+
+	
 	ActiveGroups.Add(Handle, Group);
 	OutHandle = Handle;
 
@@ -418,42 +442,181 @@ void UDeliverySubsystemV3::EvaluateRigIfNeeded(UDeliveryGroupRuntimeV3* Group, f
 
 	LastRigEvalTimeByHandle.Add(Group->GroupHandle, NowSeconds);
 
-	for (auto& Pair : Group->PrimitiveCtxById)
-	{
-		FDeliveryContextV3& PCtx = Pair.Value;
-		PCtx.AnchorPoseWS = ResolveAnchorPoseWS(Group->CtxSnapshot, Group, PCtx);
+	ResolveAllPrimitivePoses(Group->CtxSnapshot, Group, NowSeconds);
 
-		const FDeliveryAnchorRefV3& A = PCtx.Spec.Anchor;
-		const FTransform LocalXf(FQuat(A.LocalRotation), A.LocalOffset, A.LocalScale);
-		PCtx.FinalPoseWS = LocalXf * PCtx.AnchorPoseWS;
-	}
 }
 
-FTransform UDeliverySubsystemV3::ResolveAnchorPoseWS(const FSpellExecContextV3& /*Ctx*/, UDeliveryGroupRuntimeV3* Group, const FDeliveryContextV3& PrimitiveCtx) const
+bool UDeliverySubsystemV3::TryResolveAnchorPoseWS(
+	const FSpellExecContextV3& /*Ctx*/,
+	UDeliveryGroupRuntimeV3* Group,
+	const FDeliveryContextV3& PrimitiveCtx,
+	FTransform& OutAnchorPoseWS
+) const
 {
+	OutAnchorPoseWS = FTransform::Identity;
+
 	if (!Group)
 	{
-		return FTransform::Identity;
+		return false;
 	}
 
 	const FDeliveryAnchorRefV3& A = PrimitiveCtx.Spec.Anchor;
 
 	if (A.Kind == EDeliveryAnchorRefKindV3::Root)
 	{
-		return Group->RigCache.RootWS;
+		OutAnchorPoseWS = Group->RigCache.RootWS;
+		return true;
 	}
 
 	if (A.Kind == EDeliveryAnchorRefKindV3::EmitterIndex)
 	{
 		if (Group->RigCache.EmittersWS.IsValidIndex(A.EmitterIndex))
 		{
-			return Group->RigCache.EmittersWS[A.EmitterIndex];
+			OutAnchorPoseWS = Group->RigCache.EmittersWS[A.EmitterIndex];
+			return true;
 		}
-		return Group->RigCache.RootWS;
+
+		OutAnchorPoseWS = Group->RigCache.RootWS;
+		return true;
 	}
 
-	return Group->RigCache.RootWS;
+	if (A.Kind == EDeliveryAnchorRefKindV3::PrimitiveId)
+	{
+		if (A.TargetPrimitiveId == NAME_None)
+		{
+			return false; // missing reference
+		}
+
+		const FDeliveryContextV3* Target = Group->PrimitiveCtxById.Find(A.TargetPrimitiveId);
+		if (!Target)
+		{
+			return false; // not found (stopped or not created)
+		}
+
+		OutAnchorPoseWS = Target->FinalPoseWS;
+		return true;
+	}
+
+	// default fallback
+	OutAnchorPoseWS = Group->RigCache.RootWS;
+	return true;
 }
+
+void UDeliverySubsystemV3::ResolveAllPrimitivePoses(
+    const FSpellExecContextV3& Ctx,
+    UDeliveryGroupRuntimeV3* Group,
+    float NowSeconds
+)
+{
+    if (!Group)
+    {
+        return;
+    }
+
+    // Deterministic order: sort by PrimitiveIndex (stored in ctx)
+    TArray<FName> Order;
+    Order.Reserve(Group->PrimitiveCtxById.Num());
+
+    for (auto It = Group->PrimitiveCtxById.CreateConstIterator(); It; ++It)
+    {
+        Order.Add(It.Key());
+    }
+
+    Order.Sort([&](const FName& A, const FName& B)
+    {
+        const FDeliveryContextV3* CA = Group->PrimitiveCtxById.Find(A);
+        const FDeliveryContextV3* CB = Group->PrimitiveCtxById.Find(B);
+        const int32 IA = CA ? CA->PrimitiveIndex : 0;
+        const int32 IB = CB ? CB->PrimitiveIndex : 0;
+        if (IA != IB) return IA < IB;
+        return A.LexicalLess(B);
+    });
+
+    // Collect StopSelf deterministically
+    TArray<FName> ToStop;
+    ToStop.Reserve(4);
+
+    // N-pass so chains can resolve even if out of order
+    const int32 MaxPasses = FMath::Max(1, Order.Num());
+
+    for (int32 Pass = 0; Pass < MaxPasses; ++Pass)
+    {
+        bool bAnyUpdated = false;
+
+        for (const FName& Pid : Order)
+        {
+            FDeliveryContextV3* PCtx = Group->PrimitiveCtxById.Find(Pid);
+            if (!PCtx)
+            {
+                continue;
+            }
+
+            FTransform AnchorWS;
+            const bool bOk = TryResolveAnchorPoseWS(Ctx, Group, *PCtx, AnchorWS);
+
+            if (!bOk)
+            {
+                switch (PCtx->Spec.OnMissingAnchor)
+                {
+                case EDeliveryMissingAnchorPolicyV3::Freeze:
+                    // Keep previous AnchorPoseWS/FinalPoseWS untouched
+                    continue;
+
+                case EDeliveryMissingAnchorPolicyV3::FallbackToRoot:
+                    AnchorWS = Group->RigCache.RootWS;
+                    break;
+
+                case EDeliveryMissingAnchorPolicyV3::StopSelf:
+                    if (!ToStop.Contains(Pid))
+                    {
+                        ToStop.Add(Pid);
+                    }
+                    // While waiting to stop, freeze pose (no update)
+                    continue;
+
+                default:
+                    AnchorWS = Group->RigCache.RootWS;
+                    break;
+                }
+            }
+
+            // Apply local anchor offset
+            const FDeliveryAnchorRefV3& A = PCtx->Spec.Anchor;
+            const FTransform LocalXf(FQuat(A.LocalRotation), A.LocalOffset, A.LocalScale);
+
+            PCtx->AnchorPoseWS = AnchorWS;
+            PCtx->FinalPoseWS = LocalXf * PCtx->AnchorPoseWS;
+
+            bAnyUpdated = true;
+        }
+
+        // Early out if nothing changed in this pass
+        if (!bAnyUpdated)
+        {
+            break;
+        }
+    }
+
+    // Execute StopSelf after pose resolution (stable order)
+    if (ToStop.Num() > 0)
+    {
+        ToStop.Sort([&](const FName& A, const FName& B)
+        {
+            const FDeliveryContextV3* CA = Group->PrimitiveCtxById.Find(A);
+            const FDeliveryContextV3* CB = Group->PrimitiveCtxById.Find(B);
+            const int32 IA = CA ? CA->PrimitiveIndex : 0;
+            const int32 IB = CB ? CB->PrimitiveIndex : 0;
+            if (IA != IB) return IA < IB;
+            return A.LexicalLess(B);
+        });
+
+        for (const FName& Pid : ToStop)
+        {
+            StopPrimitiveInGroup(Ctx, Group, Pid, EDeliveryStopReasonV3::Failed);
+        }
+    }
+}
+
 
 void UDeliverySubsystemV3::StopAllForRuntimeGuid(const FGuid& RuntimeGuid, EDeliveryStopReasonV3 Reason)
 {

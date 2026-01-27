@@ -242,22 +242,6 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 		PCtx.FinalPoseWS = LocalXf * PCtx.AnchorPoseWS;
 
 		Group->PrimitiveCtxById.Add(PSpec.PrimitiveId, PCtx);
-
-
-		UDeliveryDriverBaseV3* Driver = CreateDriverForKind(PSpec.Kind);
-		if (!Driver)
-		{
-			UE_LOG(LogIMOPDeliveryV3, Error, TEXT("StartDelivery: Failed to create driver for primitive %s kind=%d"),
-				*PSpec.PrimitiveId.ToString(), (int32)PSpec.Kind);
-			continue;
-		}
-
-		Driver->GroupHandle = Handle;
-		Driver->PrimitiveId = PSpec.PrimitiveId;
-		Driver->bActive = true;
-
-		Group->DriversByPrimitiveId.Add(PSpec.PrimitiveId, Driver);
-		//Driver->Start(Ctx, Group, PCtx);
 	}
 
 	ResolveAllPrimitivePoses(Ctx, Group, Now);

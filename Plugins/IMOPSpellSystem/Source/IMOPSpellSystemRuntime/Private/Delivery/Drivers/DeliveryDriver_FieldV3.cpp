@@ -69,6 +69,19 @@ void UDeliveryDriver_FieldV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGrou
 		return;
 	}
 
+	// Pull latest primitive context (poses/motion/anchors) from group each tick
+	if (const FDeliveryContextV3* Latest = Group->PrimitiveCtxById.Find(PrimitiveId))
+	{
+		LocalCtx = *Latest;
+	}
+	else
+	{
+		// Primitive no longer exists in group (stopped/removed)
+		bActive = false;
+		return;
+	}
+
+	
 	// Emit primitive tick (for analytics/debug; cheap)
 	EmitPrimitiveTick(Ctx, DeltaSeconds);
 
@@ -92,6 +105,12 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 		return;
 	}
 
+	if (const FDeliveryContextV3* Latest = Group->PrimitiveCtxById.Find(PrimitiveId))
+	{
+		LocalCtx = *Latest;
+	}
+
+	
 	const FDeliveryPrimitiveSpecV3& Spec = LocalCtx.Spec;
 
 	// Center: already includes AnchorRef -> FinalPoseWS

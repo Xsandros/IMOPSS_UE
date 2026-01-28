@@ -206,7 +206,8 @@ struct FDeliveryMoverConfigV3
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover",
+			  meta=(DisplayName="Trajectory Kind"))
 	EMoverMotionKindV3 Motion = EMoverMotionKindV3::Straight;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover")
@@ -304,17 +305,22 @@ struct FDeliveryPrimitiveSpecV3
 	FDeliveryDebugDrawConfigV3 DebugDrawOverride;
 
 	// Per-kind configs
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::InstantQuery", EditConditionHides))
 	FDeliveryInstantQueryConfigV3 InstantQuery;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::Field", EditConditionHides))
 	FDeliveryFieldConfigV3 Field;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::Mover", EditConditionHides))
 	FDeliveryMoverConfigV3 Mover;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::Beam", EditConditionHides))
 	FDeliveryBeamConfigV3 Beam;
+
 };
 
 // ============================================================
@@ -332,7 +338,7 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
 	FDeliveryAttachV3 Attach;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(DisplayName="Anchor Rig", ToolTip="Optional anchor provider. Supplies Root + EmitterIndex transforms (e.g. Hand/Muzzle/Camera) used by Primitive Anchors. Not a primitive graph."))
 	TObjectPtr<UDeliveryRigV3> Rig = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")

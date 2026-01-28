@@ -26,6 +26,13 @@ enum class EDeliveryMotionApplyPolicyV3 : uint8
 };
 
 USTRUCT(BlueprintType)
+struct FDeliveryMotionPayloadBaseV3
+{
+    GENERATED_BODY()
+};
+
+
+USTRUCT(BlueprintType)
 struct FDeliveryMotionSpecV3
 {
     GENERATED_BODY()
@@ -44,8 +51,10 @@ struct FDeliveryMotionSpecV3
     float Weight = 1.0f;
 
     // Variant payload: one of the payload structs below.
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Motion")
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Motion",
+              meta=(BaseStruct="DeliveryMotionPayloadBaseV3"))
     FInstancedStruct Payload;
+
 };
 
 // -------------------------------
@@ -54,7 +63,7 @@ struct FDeliveryMotionSpecV3
 
 // 1) Linear velocity (classic projectile drift)
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_LinearVelocityV3
+struct FDeliveryMotion_LinearVelocityV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 
@@ -68,7 +77,7 @@ struct FDeliveryMotion_LinearVelocityV3
 
 // 2) Constant acceleration (gravity-like, thrust, etc.)
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_AccelerationV3
+struct FDeliveryMotion_AccelerationV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 
@@ -81,7 +90,7 @@ struct FDeliveryMotion_AccelerationV3
 
 // 3) Orbit around origin (anchor or world)
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_OrbitV3
+struct FDeliveryMotion_OrbitV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 
@@ -102,7 +111,7 @@ struct FDeliveryMotion_OrbitV3
 
 // 4) Spin (rotate in place)
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_SpinV3
+struct FDeliveryMotion_SpinV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 
@@ -112,7 +121,7 @@ struct FDeliveryMotion_SpinV3
 
 // 5) Sine offset (bob/wave)
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_SineOffsetV3
+struct FDeliveryMotion_SineOffsetV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 
@@ -128,7 +137,7 @@ struct FDeliveryMotion_SineOffsetV3
 
 // 6) Sine scale (pulse)
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_SineScaleV3
+struct FDeliveryMotion_SineScaleV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 
@@ -144,7 +153,7 @@ struct FDeliveryMotion_SineScaleV3
 
 // 7) Deterministic "noise" offset (pseudo-noise)
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_NoiseOffsetV3
+struct FDeliveryMotion_NoiseOffsetV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 
@@ -160,7 +169,7 @@ UENUM(BlueprintType)
 enum class EDeliveryEaseV3 : uint8 { Linear, SmoothStep };
 
 USTRUCT(BlueprintType)
-struct FDeliveryMotion_LerpOffsetV3
+struct FDeliveryMotion_LerpOffsetV3 : public FDeliveryMotionPayloadBaseV3
 {
     GENERATED_BODY()
 

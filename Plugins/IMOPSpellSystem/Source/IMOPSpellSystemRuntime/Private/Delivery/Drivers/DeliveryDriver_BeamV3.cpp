@@ -143,8 +143,9 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	}
 
 	const float Range = FMath::Max(0.f, B.Range);
-	const FVector End = Origin + Dir * Range;
-	const FDeliveryDebugDrawConfigV3& DebugCfg = LocalCtx.DebugCfg;
+	const FVector End = Origin + Dir * Range;const FDeliveryDebugDrawConfigV3 DebugCfg =
+	(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+
 
 	// NEW: overlay debug (beam line + id/kind)
 	DebugDrawBeamLine(World, Spec, Origin, End, DebugCfg);
@@ -190,7 +191,6 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	}
 
 	// Debug draw
-	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 	if (DebugCfg.bEnable)
 	{
 		const float Dur = DebugCfg.Duration;

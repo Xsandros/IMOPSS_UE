@@ -236,12 +236,12 @@ protected:
 		static const auto* CVar = IConsoleManager::Get().FindTConsoleVariableDataFloat(TEXT("imop.Delivery.DebugDrawLife"));
 		return CVar ? CVar->GetValueOnGameThread() : 0.05f;
 	}
-
-	template<typename TDebugCfg>
-	bool ShouldOverlayDraw(const TDebugCfg& DebugCfg) const
+	
+	bool ShouldOverlayDraw(const FDeliveryDebugDrawConfigV3& DebugCfg) const
 	{
-		return IsOverlayCVarEnabled() || DebugCfg.bEnabled;
+		return IsOverlayCVarEnabled() || DebugCfg.bEnable;
 	}
+
 
 
 };

@@ -123,7 +123,9 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 
 	// Center: already includes AnchorRef -> FinalPoseWS
 	const FVector Center = LocalCtx.FinalPoseWS.GetLocation();
-	const FDeliveryDebugDrawConfigV3& DebugCfg = LocalCtx.DebugCfg;
+	const FDeliveryDebugDrawConfigV3 DebugCfg =
+		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+
 	DebugDrawPrimitiveShape(World, Spec, LocalCtx.FinalPoseWS, DebugCfg);
 	
 	// Collision profile
@@ -182,7 +184,6 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 	}
 
 	// Debug draw
-	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 	if (DebugCfg.bEnable && DebugCfg.bDrawShape)
 	{
 		const float Dur = DebugCfg.Duration;

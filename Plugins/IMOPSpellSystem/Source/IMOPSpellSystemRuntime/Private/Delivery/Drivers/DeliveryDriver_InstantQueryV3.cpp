@@ -100,7 +100,9 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	const FVector Dir = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
 	const float Range = FMath::Max(0.f, Q.Range);
 	const FVector To = From + Dir * Range;
-	const FDeliveryDebugDrawConfigV3& DebugCfg = PrimitiveCtx.DebugCfg;
+	const FDeliveryDebugDrawConfigV3 DebugCfg =
+		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+
 
 	// NEW: overlay debug (shape/id/kind at pose)
 	DebugDrawPrimitiveShape(World, Spec, PrimitiveCtx.FinalPoseWS, DebugCfg);
@@ -207,7 +209,6 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	}
 
 	// Debug draw
-	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 	if (DebugCfg.bEnable)
 	{
 		const float Dur = DebugCfg.Duration;

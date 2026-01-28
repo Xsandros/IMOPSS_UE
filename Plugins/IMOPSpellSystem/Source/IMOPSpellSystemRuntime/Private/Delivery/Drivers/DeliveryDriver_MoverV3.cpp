@@ -357,10 +357,6 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 
 	const FVector From = PositionWS;
 	const FVector To = PositionWS + VelocityWS * StepSeconds;
-
-	// NEW: overlay debug (label + shape at current pose)
-	// Use PCtx.FinalPoseWS if you want rotation; or build a transform from To.
-	DebugDrawPrimitiveShape(World, Spec, PrimitiveCtx.FinalPoseWS, DebugCfg);
 	
 	TArray<FHitResult> Hits;
 	const bool bAny = SweepMoveAndCollectHits(Ctx, Ctx.GetWorld(), Spec, From, To, Hits);
@@ -369,8 +365,15 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 	{
 		SortHitsDeterministic(Hits, From);
 		WriteHitsToTargetStore(Ctx, Group, PCtx, Hits);
-		DebugDraw(Ctx, Group, Spec, From, To, Hits);
+		DebugDraw(Ctx, Group, Spec, From, To, Hits);		
 
+		UWorld* World = Ctx.GetWorld();
+		const FDeliveryDebugDrawConfigV3 DebugCfg =
+			(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+
+		DebugDrawPrimitiveShape(World, Spec, PCtx.FinalPoseWS, DebugCfg);
+
+		
 		if (Spec.Events.bEmitHit)
 		{
 			EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr, Spec.Events.ExtraTags);

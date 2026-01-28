@@ -129,6 +129,193 @@ static FVector PseudoNoiseVec(const float T, const int32 Seed)
     );
 }
 
+static void FixupQueryPolicy(FDeliveryQueryPolicyV3& Q)
+{
+    // -----------------------------
+    // Default FilterMode by QueryMode (only if not explicitly set)
+    // -----------------------------
+    // If you don't have a "None" state for FilterMode, you can treat ByChannel as "default"
+    // and only override when other fields are empty.
+    //
+    // We'll use: if ByProfile but profile is None -> treat as unset.
+    //           if ByObjectType but ObjectTypes empty -> treat as unset.
+    //           if ByChannel but TraceChannel is 0 -> treat as unset (rare).
+
+    const bool bProfileUnset = (Q.FilterMode == EDeliveryQueryFilterModeV3::ByProfile) &&
+                               (Q.CollisionProfile.Name == NAME_None);
+
+    const bool bObjUnset = (Q.FilterMode == EDeliveryQueryFilterModeV3::ByObjectType) &&
+                           (Q.ObjectTypes.Num() == 0);
+
+    const bool bChannelUnset = (Q.FilterMode == EDeliveryQueryFilterModeV3::ByChannel) &&
+                               (Q.TraceChannel == ECollisionChannel::ECC_OverlapAll_Deprecated || Q.TraceChannel == 0);
+
+    const bool bFilterEffectivelyUnset = bProfileUnset || bObjUnset || bChannelUnset;
+
+    if (bFilterEffectivelyUnset)
+    {
+        if (Q.Mode == EDeliveryQueryModeV3::Overlap)
+        {
+            Q.FilterMode = EDeliveryQueryFilterModeV3::ByObjectType;
+        }
+        else
+        {
+            Q.FilterMode = EDeliveryQueryFilterModeV3::ByChannel;
+        }
+    }
+
+    // -----------------------------
+    // Enforce valid combinations
+    // -----------------------------
+    if (Q.Mode == EDeliveryQueryModeV3::LineTrace)
+    {
+        if (Q.FilterMode == EDeliveryQueryFilterModeV3::ByObjectType)
+        {
+            Q.FilterMode = EDeliveryQueryFilterModeV3::ByChannel;
+        }
+    }
+
+    if (Q.Mode == EDeliveryQueryModeV3::Overlap)
+    {
+        if (Q.FilterMode == EDeliveryQueryFilterModeV3::ByChannel)
+        {
+            Q.FilterMode = EDeliveryQueryFilterModeV3::ByObjectType;
+        }
+    }
+
+    // -----------------------------
+    // Default per-filter values (only if missing)
+    // -----------------------------
+    if (Q.FilterMode == EDeliveryQueryFilterModeV3::ByChannel)
+    {
+        if (Q.TraceChannel == 0)
+        {
+            Q.TraceChannel = ECC_Visibility;
+        }
+    }
+
+    if (Q.FilterMode == EDeliveryQueryFilterModeV3::ByProfile)
+    {
+        // Leave NAME_None as "use driver defaults" OR set a standard:
+        if (Q.CollisionProfile.Name == NAME_None)
+        {
+            // Safe baseline:
+            Q.CollisionProfile.Name = FName(TEXT("BlockAll"));
+        }
+    }
+
+    if (Q.FilterMode == EDeliveryQueryFilterModeV3::ByObjectType)
+    {
+        if (Q.ObjectTypes.Num() == 0)
+        {
+            Q.ObjectTypes.Add(ECC_WorldStatic);
+            Q.ObjectTypes.Add(ECC_WorldDynamic);
+            Q.ObjectTypes.Add(ECC_Pawn);
+        }
+    }
+}
+
+
+static void WarnWeirdKindQueryCombo(const FDeliveryPrimitiveSpecV3& P)
+{
+	if (P.Kind == EDeliveryKindV3::Field && P.Query.Mode == EDeliveryQueryModeV3::LineTrace)
+	{
+		UE_LOG(LogIMOPDeliveryV3, Warning, TEXT("Field '%s': QueryMode LineTrace behaves like Beam/InstantQuery; consider Overlap/Sweep."),
+			*P.PrimitiveId.ToString());
+	}
+
+	if (P.Kind == EDeliveryKindV3::Beam && P.Query.Mode == EDeliveryQueryModeV3::Overlap)
+	{
+		UE_LOG(LogIMOPDeliveryV3, Warning, TEXT("Beam '%s': QueryMode Overlap is unusual; consider LineTrace/Sweep."),
+			*P.PrimitiveId.ToString());
+	}
+}
+
+static bool IsShapeEffectivelyUnset(const FDeliveryShapeV3& S)
+{
+    // adapt to your shape struct fields; this is a conservative check
+    switch (S.Kind)
+    {
+        case EDeliveryShapeV3::Sphere:   return S.Radius <= 0.f;
+        case EDeliveryShapeV3::Box:      return S.Extents.IsNearlyZero();
+        case EDeliveryShapeV3::Capsule:  return (S.CapsuleRadius <= 0.f || S.HalfHeight <= 0.f);
+        case EDeliveryShapeV3::Ray:      return S.RayLength <= 0.f;
+        default:                         return true;
+    }
+}
+
+static void ApplyPrimitiveKindDefaults(FDeliveryPrimitiveSpecV3& P)
+{
+    // -----------------------------
+    // Default QueryMode by Kind (only if "not set")
+    // If your enum has no None, we use heuristics:
+    // - If Mode is Overlap but Shape is Ray: likely unintended.
+    // - Or you can add EDeliveryQueryModeV3::Default / None (better long-term).
+    // For now: only change when mode+kind combination is very suspicious.
+    // -----------------------------
+
+    // Default Shape by Kind (only if unset)
+    if (IsShapeEffectivelyUnset(P.Shape))
+    {
+        switch (P.Kind)
+        {
+            case EDeliveryKindV3::InstantQuery:
+                P.Shape.Kind = EDeliveryShapeV3::Ray;
+                P.Shape.RayLength = 1000.f;
+                break;
+
+            case EDeliveryKindV3::Beam:
+                P.Shape.Kind = EDeliveryShapeV3::Ray;
+                P.Shape.RayLength = 2000.f;
+                break;
+
+            case EDeliveryKindV3::Mover:
+                P.Shape.Kind = EDeliveryShapeV3::Sphere;
+                P.Shape.Radius = 15.f;
+                break;
+
+            case EDeliveryKindV3::Field:
+            default:
+                P.Shape.Kind = EDeliveryShapeV3::Sphere;
+                P.Shape.Radius = 150.f;
+                break;
+        }
+    }
+
+    // Nudge QueryMode defaults when clearly mismatched
+    // (If you want strict defaults, add a "bUseKindDefaults" for Query too.)
+    if (P.Kind == EDeliveryKindV3::Field)
+    {
+        // If Field + LineTrace and the shape is not Ray, it's weird; prefer Overlap.
+        if (P.Query.Mode == EDeliveryQueryModeV3::LineTrace && P.Shape.Kind != EDeliveryShapeV3::Ray)
+        {
+            P.Query.Mode = EDeliveryQueryModeV3::Overlap;
+        }
+    }
+
+    if (P.Kind == EDeliveryKindV3::Beam)
+    {
+        // Beam is almost always line/sweep; Overlap is odd.
+        if (P.Query.Mode == EDeliveryQueryModeV3::Overlap)
+        {
+            P.Query.Mode = EDeliveryQueryModeV3::LineTrace;
+        }
+    }
+
+    if (P.Kind == EDeliveryKindV3::Mover)
+    {
+        // Mover with Overlap usually not intended; prefer Sweep.
+        if (P.Query.Mode == EDeliveryQueryModeV3::Overlap)
+        {
+            P.Query.Mode = EDeliveryQueryModeV3::Sweep;
+        }
+    }
+
+    // After setting Mode, enforce/choose filter defaults
+    FixupQueryPolicy(P.Query);
+}
+
+
 static FTransform EvalMotionDelta(
     const FDeliveryMotionSpecV3& M,
     const float Elapsed,
@@ -411,7 +598,16 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 			*Spec.DeliveryId.ToString());
 		return false;
 	}
+	
+	for (const FDeliveryPrimitiveSpecV3& P : Spec.Primitives)
+	{
+		WarnWeirdKindQueryCombo(P);
+	}
 
+
+
+	
+	
 	const FGuid RuntimeGuid = ResolveRuntimeGuidFromCtx(Ctx);
 	if (!RuntimeGuid.IsValid())
 	{
@@ -435,6 +631,16 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	Group->GroupSeed = ComputeGroupSeed(RuntimeGuid, Spec.DeliveryId, InstanceIndex);
 	Group->Blackboard.InitFromSpec(Spec.BlackboardInit, Spec.OwnershipRules);
 
+	for (FDeliveryPrimitiveSpecV3& P : Group->GroupSpec.Primitives)
+	{
+		ApplyPrimitiveKindDefaults(P);
+	}
+	
+	for (FDeliveryPrimitiveSpecV3& P : Group->GroupSpec.Primitives) // oder wo du Spec kopierst
+	{
+		FixupQueryPolicy(P.Query);
+	}
+	
 	// First rig evaluation
 	Group->Blackboard.BeginPhase(EDeliveryBBPhaseV3::Rig);
 	EvaluateRigIfNeeded(Group, Now);

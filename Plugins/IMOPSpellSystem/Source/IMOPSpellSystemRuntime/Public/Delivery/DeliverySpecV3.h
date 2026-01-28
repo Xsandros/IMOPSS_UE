@@ -45,6 +45,7 @@ enum class EDeliveryAnchorRefKindV3 : uint8
 	Root,
 	EmitterIndex,
 	PrimitiveId, // NEW: anchor to another primitive in the same group
+	World          // NEW: absolute/world anchor
 };
 
 UENUM(BlueprintType)
@@ -63,12 +64,19 @@ struct FDeliveryAnchorRefV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
 	EDeliveryAnchorRefKindV3 Kind = EDeliveryAnchorRefKindV3::Root;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor",
+			  meta=(EditCondition="Kind==EDeliveryAnchorRefKindV3::EmitterIndex", EditConditionHides))
 	int32 EmitterIndex = 0;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
-	FName TargetPrimitiveId = NAME_None; // NEW (used when Kind == PrimitiveId)
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor",
+			  meta=(EditCondition="Kind==EDeliveryAnchorRefKindV3::PrimitiveId", EditConditionHides))
+	FName TargetPrimitiveId = NAME_None;
+
+	// FollowMode bleibt immer sichtbar (Freeze default hast du schon)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
+	EDeliveryAnchorFollowModeV3 FollowMode = EDeliveryAnchorFollowModeV3::FreezeOnPlace;
+
+	// Local transform bleibt sichtbar, auch für World (dann ist es world-transform / world-offset)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
 	FVector LocalOffset = FVector::ZeroVector;
 
@@ -76,10 +84,8 @@ struct FDeliveryAnchorRefV3
 	FRotator LocalRotation = FRotator::ZeroRotator;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
-	FVector LocalScale = FVector(1.f, 1.f, 1.f);
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
-	EDeliveryAnchorFollowModeV3 FollowMode = EDeliveryAnchorFollowModeV3::FreezeOnPlace;
+	FVector LocalScale = FVector(1.f,1.f,1.f);
+
 
 };
 

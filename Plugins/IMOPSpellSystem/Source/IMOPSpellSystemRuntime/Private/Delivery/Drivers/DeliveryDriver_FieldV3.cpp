@@ -117,7 +117,10 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 	const FVector Center = LocalCtx.FinalPoseWS.GetLocation();
 
 	// Collision profile
-	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("OverlapAllDynamic");
+	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
+		? Spec.Query.CollisionProfile.Name
+		: FName(TEXT("OverlapAllDynamic"));
+
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)

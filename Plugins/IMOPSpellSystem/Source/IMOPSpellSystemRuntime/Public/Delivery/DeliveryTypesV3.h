@@ -47,6 +47,23 @@ enum class EDeliveryQueryModeV3 : uint8
 };
 
 UENUM(BlueprintType)
+enum class EDeliveryAnchorFollowModeV3 : uint8
+{
+	FreezeOnPlace UMETA(DisplayName="Freeze On Place"),
+	Follow         UMETA(DisplayName="Follow Anchor"),
+};
+
+UENUM(BlueprintType)
+enum class EDeliveryQueryFilterModeV3 : uint8
+{
+	ByProfile   UMETA(DisplayName="By Collision Profile"),
+	ByChannel   UMETA(DisplayName="By Trace Channel"),
+	ByObjectType UMETA(DisplayName="By Object Type"),
+};
+
+
+
+UENUM(BlueprintType)
 enum class EDeliveryShapeV3 : uint8
 {
 	Sphere,
@@ -165,14 +182,25 @@ struct FDeliveryShapeV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
 	EDeliveryShapeV3 Kind = EDeliveryShapeV3::Sphere;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
-	float Radius = 25.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape",
+			  meta=(EditCondition="Kind==EDeliveryShapeV3::Sphere", EditConditionHides))
+	float Radius = 50.f;
 
-	UPROPERTY(EditAnywhere, Category="Delivery|Shape", meta=(EditCondition="Kind==EDeliveryShapeV3::Box", EditConditionHides))
-	FVector Extents = FVector(25.f, 25.f, 25.f);
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape",
+			  meta=(EditCondition="Kind==EDeliveryShapeV3::Box", EditConditionHides))
+	FVector Extents = FVector(50);
 
-	UPROPERTY(EditAnywhere, Category="Delivery|Shape", meta=(EditCondition="Kind==EDeliveryShapeV3::Capsule", EditConditionHides))
-	float HalfHeight = 50.f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape",
+			  meta=(EditCondition="Kind==EDeliveryShapeV3::Capsule", EditConditionHides))
+	float CapsuleRadius = 30.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape",
+			  meta=(EditCondition="Kind==EDeliveryShapeV3::Capsule", EditConditionHides))
+	float HalfHeight = 60.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape",
+			  meta=(EditCondition="Kind==EDeliveryShapeV3::Ray", EditConditionHides))
+	float RayLength = 1000.f;
 };
 
 USTRUCT(BlueprintType)
@@ -184,7 +212,22 @@ struct FDeliveryQueryPolicyV3
 	EDeliveryQueryModeV3 Mode = EDeliveryQueryModeV3::Sweep;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
-	FName CollisionProfile = NAME_None;
+	EDeliveryQueryFilterModeV3 FilterMode = EDeliveryQueryFilterModeV3::ByChannel;
+
+	// Profile dropdown
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query",
+			  meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByProfile", EditConditionHides))
+	FCollisionProfileName CollisionProfile;
+
+	// Channel dropdown
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query",
+			  meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByChannel", EditConditionHides))
+	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
+
+	// Object types
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query",
+			  meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByObjectType", EditConditionHides))
+	TArray<TEnumAsByte<ECollisionChannel>> ObjectTypes;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
 	bool bIgnoreCaster = true;

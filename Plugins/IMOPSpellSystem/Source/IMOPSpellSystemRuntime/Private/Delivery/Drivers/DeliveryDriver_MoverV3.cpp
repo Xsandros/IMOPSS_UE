@@ -119,8 +119,9 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 		}
 	}
 
-	const bool bUseProfile = (Spec.Query.CollisionProfile != NAME_None);
-	const FName Profile = Spec.Query.CollisionProfile; // only valid if bUseProfile
+	const FName Profile = Spec.Query.CollisionProfile.Name;
+	const bool bUseProfile = (Profile != NAME_None);
+
 
 
 	// Ray or LineTrace mode => line trace

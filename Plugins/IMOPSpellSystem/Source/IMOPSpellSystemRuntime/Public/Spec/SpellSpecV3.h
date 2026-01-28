@@ -10,6 +10,12 @@ UCLASS(BlueprintType)
 class IMOPSPELLSYSTEMRUNTIME_API USpellSpecV3 : public UDataAsset
 {
     GENERATED_BODY()
+#if WITH_EDITOR
+    virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
+    
+    
 public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Spell|Spec")
     FName SpellId = NAME_None;

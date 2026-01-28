@@ -77,6 +77,10 @@ struct FDeliveryAnchorRefV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
 	FVector LocalScale = FVector(1.f, 1.f, 1.f);
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
+	EDeliveryAnchorFollowModeV3 FollowMode = EDeliveryAnchorFollowModeV3::FreezeOnPlace;
+
 };
 
 // ============================================================
@@ -263,6 +267,39 @@ struct FDeliveryBeamConfigV3
 // ============================================================
 
 USTRUCT(BlueprintType)
+struct FDeliveryEventPolicyV3
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bUseKindDefaults = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bEmitStarted = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bEmitStopped = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bEmitHit = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events",
+			  meta=(EditCondition="bIsField", EditConditionHides))
+	bool bEmitEnter = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events",
+			  meta=(EditCondition="bIsField", EditConditionHides))
+	bool bEmitExit = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events",
+			  meta=(EditCondition="bIsField", EditConditionHides))
+	bool bEmitStay = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	FGameplayTagContainer ExtraTags;
+};
+
+USTRUCT(BlueprintType)
 struct FDeliveryPrimitiveSpecV3
 {
 	GENERATED_BODY()
@@ -273,7 +310,7 @@ struct FDeliveryPrimitiveSpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	EDeliveryKindV3 Kind = EDeliveryKindV3::InstantQuery;
 	
-	// Per-kind configs
+	// ---------- Kind-specific config (direkt darunter!) ----------
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
 			  meta=(EditCondition="Kind==EDeliveryKindV3::InstantQuery", EditConditionHides))
 	FDeliveryInstantQueryConfigV3 InstantQuery;
@@ -318,6 +355,10 @@ struct FDeliveryPrimitiveSpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryDebugDrawConfigV3 DebugDrawOverride;
 	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	FDeliveryEventPolicyV3 Events;
+
+	
 
 };
 
@@ -360,4 +401,5 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
 	TArray<FDeliveryPrimitiveSpecV3> Primitives;
 };
+
 

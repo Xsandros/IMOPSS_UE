@@ -138,7 +138,10 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	const FVector End = Origin + Dir * Range;
 
 	// Collision profile
-	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("Visibility");
+	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
+		? Spec.Query.CollisionProfile.Name
+		: FName(TEXT("Visibility")); // falls du wirklich Profile willst (ansonsten besser Channel)
+
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Beam), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)

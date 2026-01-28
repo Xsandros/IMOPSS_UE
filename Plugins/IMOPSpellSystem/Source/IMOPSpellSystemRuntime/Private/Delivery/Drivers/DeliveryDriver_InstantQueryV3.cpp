@@ -105,7 +105,10 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 		}
 	}
 
-	const FName Profile = (Spec.Query.CollisionProfile != NAME_None) ? Spec.Query.CollisionProfile : FName("Visibility");
+	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
+		? Spec.Query.CollisionProfile.Name
+		: FName(TEXT("Visibility")); // falls du wirklich Profile willst (ansonsten besser Channel)
+
 
 	TArray<FHitResult> Hits;
 	bool bAny = false;

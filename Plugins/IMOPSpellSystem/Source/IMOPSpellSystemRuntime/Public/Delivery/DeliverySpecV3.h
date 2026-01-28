@@ -55,8 +55,6 @@ enum class EDeliveryMissingAnchorPolicyV3 : uint8
 	StopSelf,       // stop this primitive (model 1 friendly)
 };
 
-
-
 USTRUCT(BlueprintType)
 struct FDeliveryAnchorRefV3
 {
@@ -70,7 +68,6 @@ struct FDeliveryAnchorRefV3
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
 	FName TargetPrimitiveId = NAME_None; // NEW (used when Kind == PrimitiveId)
-
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Anchor")
 	FVector LocalOffset = FVector::ZeroVector;
@@ -275,6 +272,23 @@ struct FDeliveryPrimitiveSpecV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	EDeliveryKindV3 Kind = EDeliveryKindV3::InstantQuery;
+	
+	// Per-kind configs
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::InstantQuery", EditConditionHides))
+	FDeliveryInstantQueryConfigV3 InstantQuery;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::Field", EditConditionHides))
+	FDeliveryFieldConfigV3 Field;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::Mover", EditConditionHides))
+	FDeliveryMoverConfigV3 Mover;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+			  meta=(EditCondition="Kind==EDeliveryKindV3::Beam", EditConditionHides))
+	FDeliveryBeamConfigV3 Beam;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryAnchorRefV3 Anchor;
@@ -303,23 +317,7 @@ struct FDeliveryPrimitiveSpecV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryDebugDrawConfigV3 DebugDrawOverride;
-
-	// Per-kind configs
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
-			  meta=(EditCondition="Kind==EDeliveryKindV3::InstantQuery", EditConditionHides))
-	FDeliveryInstantQueryConfigV3 InstantQuery;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
-			  meta=(EditCondition="Kind==EDeliveryKindV3::Field", EditConditionHides))
-	FDeliveryFieldConfigV3 Field;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
-			  meta=(EditCondition="Kind==EDeliveryKindV3::Mover", EditConditionHides))
-	FDeliveryMoverConfigV3 Mover;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
-			  meta=(EditCondition="Kind==EDeliveryKindV3::Beam", EditConditionHides))
-	FDeliveryBeamConfigV3 Beam;
+	
 
 };
 
@@ -362,3 +360,4 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
 	TArray<FDeliveryPrimitiveSpecV3> Primitives;
 };
+

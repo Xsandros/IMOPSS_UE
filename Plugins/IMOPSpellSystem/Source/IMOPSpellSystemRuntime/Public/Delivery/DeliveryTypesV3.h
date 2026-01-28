@@ -168,10 +168,10 @@ struct FDeliveryShapeV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
 	float Radius = 25.f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
+	UPROPERTY(EditAnywhere, Category="Delivery|Shape", meta=(EditCondition="Kind==EDeliveryShapeV3::Box", EditConditionHides))
 	FVector Extents = FVector(25.f, 25.f, 25.f);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Shape")
+	UPROPERTY(EditAnywhere, Category="Delivery|Shape", meta=(EditCondition="Kind==EDeliveryShapeV3::Capsule", EditConditionHides))
 	float HalfHeight = 50.f;
 };
 
@@ -189,6 +189,7 @@ struct FDeliveryQueryPolicyV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
 	bool bIgnoreCaster = true;
 };
+
 
 // ============================================================
 // Attach
@@ -211,3 +212,4 @@ struct FDeliveryAttachV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	FTransform LocalOffset = FTransform::Identity;
 };
+

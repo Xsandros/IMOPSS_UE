@@ -56,7 +56,11 @@ void UDeliveryDriver_FieldV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGro
 	CurrentSet.Reset();
 
 	// Primitive started event (consistent with other drivers)
-	EmitPrimitiveStarted(Ctx);
+	if (LocalCtx.Spec.Events.bEmitStarted)
+	{
+		EmitPrimitiveStarted(Ctx, LocalCtx.Spec.Events.ExtraTags);
+	}
+
 
 	// Evaluate immediately once so the field is “live” on start
 	Evaluate(Ctx, Group);
@@ -83,7 +87,11 @@ void UDeliveryDriver_FieldV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGrou
 
 	
 	// Emit primitive tick (for analytics/debug; cheap)
-	EmitPrimitiveTick(Ctx, DeltaSeconds);
+	if (LocalCtx.Spec.Events.bEmitTick)
+	{
+		EmitPrimitiveTick(Ctx, DeltaSeconds, LocalCtx.Spec.Events.ExtraTags);
+	}
+
 
 	TimeSinceLastEval += DeltaSeconds;
 
@@ -115,7 +123,9 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 
 	// Center: already includes AnchorRef -> FinalPoseWS
 	const FVector Center = LocalCtx.FinalPoseWS.GetLocation();
-
+	const FDeliveryDebugDrawConfigV3& DebugCfg = LocalCtx.DebugCfg;
+	DebugDrawPrimitiveShape(World, Spec, LocalCtx.FinalPoseWS, DebugCfg);
+	
 	// Collision profile
 	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
 		? Spec.Query.CollisionProfile.Name
@@ -236,21 +246,28 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 			}
 		}
 
-		if (EnterCount > 0)
+		if (EnterCount > 0 && Spec.FieldEvents.bEmitEnter)
 		{
-			EmitPrimitiveEnter(Ctx);
+			EmitPrimitiveEnter(Ctx, Spec.Events.ExtraTags);
 		}
-		if (ExitCount > 0)
+		if (ExitCount > 0 && Spec.FieldEvents.bEmitExit)
 		{
-			EmitPrimitiveExit(Ctx);
+			EmitPrimitiveExit(Ctx, Spec.Events.ExtraTags);
 		}
+
 	}
 
 	// Stay + Hit semantics
 	if (NewSet.Num() > 0)
 	{
-		EmitPrimitiveStay(Ctx);
-		EmitPrimitiveHit(Ctx, /*Magnitude*/ (float)NewSet.Num(), nullptr);
+		if (Spec.FieldEvents.bEmitStay)
+		{
+			EmitPrimitiveStay(Ctx, Spec.Events.ExtraTags);
+		}
+		if (Spec.Events.bEmitHit)
+		{
+			EmitPrimitiveHit(Ctx, (float)NewSet.Num(), nullptr, Spec.Events.ExtraTags);
+		}
 	}
 
 	UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Eval: %s/%s inside=%d any=%d center=%s"),
@@ -269,7 +286,11 @@ void UDeliveryDriver_FieldV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGrou
 	bActive = false;
 	CurrentSet.Reset();
 
-	EmitPrimitiveStopped(Ctx, Reason);
+	if (LocalCtx.Spec.Events.bEmitStopped)
+	{
+		EmitPrimitiveStopped(Ctx, Reason, LocalCtx.Spec.Events.ExtraTags);
+	}
+
 
 	UE_LOG(LogIMOPDeliveryFieldV3, Log, TEXT("Field stopped: %s/%s inst=%d reason=%d"),
 		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), GroupHandle.InstanceIndex, (int32)Reason);

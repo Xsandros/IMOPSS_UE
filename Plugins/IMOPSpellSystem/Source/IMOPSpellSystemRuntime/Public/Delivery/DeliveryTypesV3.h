@@ -214,20 +214,18 @@ struct FDeliveryQueryPolicyV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
 	EDeliveryQueryFilterModeV3 FilterMode = EDeliveryQueryFilterModeV3::ByChannel;
 
-	// Profile dropdown
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query",
 			  meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByProfile", EditConditionHides))
 	FCollisionProfileName CollisionProfile;
 
-	// Channel dropdown
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query",
 			  meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByChannel", EditConditionHides))
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
 
-	// Object types
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query",
 			  meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByObjectType", EditConditionHides))
 	TArray<TEnumAsByte<ECollisionChannel>> ObjectTypes;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
 	bool bIgnoreCaster = true;
@@ -246,12 +244,18 @@ struct FDeliveryAttachV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	EDeliveryAttachModeV3 Mode = EDeliveryAttachModeV3::Caster;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
+	// Only meaningful for CasterSocket (or any socket-based mode)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach",
+			  meta=(EditCondition="Mode==EDeliveryAttachModeV3::CasterSocket", EditConditionHides))
 	FName SocketName = NAME_None;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
-	TWeakObjectPtr<AActor> TargetActor;
+	// Only meaningful for TargetActor
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach",
+			  meta=(EditCondition="Mode==EDeliveryAttachModeV3::TargetActor", EditConditionHides))
+	TSoftObjectPtr<AActor> TargetActor; 
+	// or TObjectPtr/AActor* depending on what you currently store
 
+	// Usually always meaningful (offset from the chosen base)
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Attach")
 	FTransform LocalOffset = FTransform::Identity;
 };

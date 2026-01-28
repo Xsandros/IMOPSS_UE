@@ -75,7 +75,12 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, UDeli
 	bActive = true;
 
 	const bool bAny = EvaluateOnce(Ctx, Group, PrimitiveCtx);
+	if (PrimitiveCtx.Spec.Events.bEmitStarted)
+	{
+		EmitPrimitiveStarted(Ctx, PrimitiveCtx.Spec.Events.ExtraTags);
+	}
 
+	
 	// Instant query ends immediately.
 	Stop(Ctx, Group, bAny ? EDeliveryStopReasonV3::OnFirstHit : EDeliveryStopReasonV3::DurationElapsed);
 }
@@ -95,7 +100,13 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	const FVector Dir = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
 	const float Range = FMath::Max(0.f, Q.Range);
 	const FVector To = From + Dir * Range;
+	const FDeliveryDebugDrawConfigV3& DebugCfg = PrimitiveCtx.DebugCfg;
 
+	// NEW: overlay debug (shape/id/kind at pose)
+	DebugDrawPrimitiveShape(World, Spec, PrimitiveCtx.FinalPoseWS, DebugCfg);
+	DebugDrawBeamLine(World, Spec, From, To, DebugCfg);
+
+	
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_InstantQuery), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)
 	{
@@ -236,27 +247,11 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 		}
 	}
 
-	// ===== Emit Event: Spell.Event.Delivery.Hit (if any)
-	if (Hits.Num() > 0)
+	if (Hits.Num() > 0 && Spec.Events.bEmitHit)
 	{
-		if (USpellEventBusSubsystemV3* Bus = ResolveEventBus(Ctx))
-		{
-			const auto& Tags = FIMOPSpellGameplayTagsV3::Get();
-
-			FSpellEventV3 Ev;
-			Ev.EventTag = Tags.Event_Delivery_Hit;
-			Ev.RuntimeGuid = ResolveRuntimeGuid(Ctx);
-			Ev.DeliveryHandle = GroupHandle;
-			Ev.DeliveryPrimitiveId = PrimitiveId;
-
-			Ev.Caster = Ctx.GetCaster();
-			Ev.Sender = Ctx.GetCaster();
-			Ev.FrameNumber = (int32)GFrameCounter;
-			Ev.TimeSeconds = World ? World->GetTimeSeconds() : 0.f;
-
-			Bus->Emit(Ev);
-		}
+		EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr, Spec.Events.ExtraTags);
 	}
+
 
 	UE_LOG(LogIMOPDeliveryInstantQueryV3, Verbose, TEXT("InstantQuery: %s/%s hits=%d any=%d"),
 		*GroupHandle.DeliveryId.ToString(),
@@ -267,14 +262,15 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	return bAny;
 }
 
-void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& /*Ctx*/, UDeliveryGroupRuntimeV3* /*Group*/, EDeliveryStopReasonV3 Reason)
+void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason)
 {
-	if (!bActive)
-	{
-		return;
-	}
-
+	if (!bActive) { return; }
 	bActive = false;
+
+	if (LocalCtx.Spec.Events.bEmitStopped)
+	{
+		EmitPrimitiveStopped(Ctx, Reason, LocalCtx.Spec.Events.ExtraTags);
+	}
 
 	UE_LOG(LogIMOPDeliveryInstantQueryV3, Log, TEXT("InstantQuery stopped: %s/%s inst=%d reason=%d"),
 		*GroupHandle.DeliveryId.ToString(),

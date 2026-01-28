@@ -298,7 +298,11 @@ void UDeliveryDriver_MoverV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGro
 
 	NextSimTimeSeconds = World->GetTimeSeconds();
 
-	EmitPrimitiveStarted(Ctx);
+	if (PrimitiveCtx.Spec.Events.bEmitStarted)
+	{
+		EmitPrimitiveStarted(Ctx, PrimitiveCtx.Spec.Events.ExtraTags);
+	}
+
 	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover started: %s/%s"), *GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString());
 }
 
@@ -354,6 +358,10 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 	const FVector From = PositionWS;
 	const FVector To = PositionWS + VelocityWS * StepSeconds;
 
+	// NEW: overlay debug (label + shape at current pose)
+	// Use PCtx.FinalPoseWS if you want rotation; or build a transform from To.
+	DebugDrawPrimitiveShape(World, Spec, PrimitiveCtx.FinalPoseWS, DebugCfg);
+	
 	TArray<FHitResult> Hits;
 	const bool bAny = SweepMoveAndCollectHits(Ctx, Ctx.GetWorld(), Spec, From, To, Hits);
 
@@ -363,7 +371,11 @@ bool UDeliveryDriver_MoverV3::StepSim(const FSpellExecContextV3& Ctx, UDeliveryG
 		WriteHitsToTargetStore(Ctx, Group, PCtx, Hits);
 		DebugDraw(Ctx, Group, Spec, From, To, Hits);
 
-		EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr);
+		if (Spec.Events.bEmitHit)
+		{
+			EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr, Spec.Events.ExtraTags);
+		}
+
 
 		if (M.bPierce)
 		{
@@ -421,11 +433,16 @@ void UDeliveryDriver_MoverV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGrou
 		return;
 	}
 
-	EmitPrimitiveTick(Ctx, DeltaSeconds);
 
 	const FDeliveryContextV3* Live = Group->PrimitiveCtxById.Find(PrimitiveId);
 	const FDeliveryContextV3& PCtx = Live ? *Live : LocalCtx;
 
+	if (PCtx.Spec.Events.bEmitTick)
+	{
+		EmitPrimitiveTick(Ctx, DeltaSeconds, PCtx.Spec.Events.ExtraTags);
+	}
+	
+	
 	const float Now = World->GetTimeSeconds();
 	const float Interval = FMath::Max(0.f, PCtx.Spec.Mover.TickInterval);
 
@@ -453,7 +470,11 @@ void UDeliveryDriver_MoverV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGrou
 
 	bActive = false;
 
-	EmitPrimitiveStopped(Ctx, Reason);
+	if (LocalCtx.Spec.Events.bEmitStopped)
+	{
+		EmitPrimitiveStopped(Ctx, Reason, LocalCtx.Spec.Events.ExtraTags);
+	}
+
 
 	UE_LOG(LogIMOPDeliveryMoverV3, Log, TEXT("Mover stopped: %s/%s inst=%d reason=%d traveled=%.1f pierce=%d"),
 		*GroupHandle.DeliveryId.ToString(),

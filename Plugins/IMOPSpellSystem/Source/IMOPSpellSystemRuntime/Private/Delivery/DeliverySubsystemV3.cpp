@@ -17,6 +17,22 @@
 
 DEFINE_LOG_CATEGORY(LogIMOPDeliveryV3);
 
+
+static TAutoConsoleVariable<int32> CVarIMOPDeliveryDebugDraw(
+	TEXT("imop.Delivery.DebugDraw"),
+	0,
+	TEXT("0=off, 1=on (draw delivery primitives shapes + ids)"),
+	ECVF_Default
+);
+
+static TAutoConsoleVariable<float> CVarIMOPDeliveryDebugDrawLife(
+	TEXT("imop.Delivery.DebugDrawLife"),
+	0.05f,
+	TEXT("Lifetime for debug draw shapes (seconds). Keep small to avoid clutter."),
+	ECVF_Default
+);
+
+
 // ------------------------------------------------------------
 // Local hash helpers (self-contained)
 // ------------------------------------------------------------
@@ -215,6 +231,96 @@ static void FixupQueryPolicy(FDeliveryQueryPolicyV3& Q)
     }
 }
 
+static TAutoConsoleVariable<int32> CVarIMOPDeliveryValidationLog(
+	TEXT("imop.Delivery.ValidationLog"),
+	1,
+	TEXT("Logs a one-time validation summary when a delivery group starts.\n")
+	TEXT("0 = off, 1 = on"),
+	ECVF_Default
+);
+
+static FString ToString(const FDeliveryShapeV3& S)
+{
+    switch (S.Kind)
+    {
+        case EDeliveryShapeV3::Sphere:
+            return FString::Printf(TEXT("Sphere r=%.1f"), S.Radius);
+        case EDeliveryShapeV3::Box:
+            return FString::Printf(TEXT("Box ext=%s"), *S.Extents.ToString());
+        case EDeliveryShapeV3::Capsule:
+            return FString::Printf(TEXT("Capsule r=%.1f h=%.1f"), S.CapsuleRadius, S.HalfHeight);
+        case EDeliveryShapeV3::Ray:
+            return FString::Printf(TEXT("Ray len=%.1f"), S.RayLength);
+        default:
+            return TEXT("UnknownShape");
+    }
+}
+
+static FString ToString(const FDeliveryQueryPolicyV3& Q)
+{
+    FString Mode = UEnum::GetValueAsString(Q.Mode);
+    FString Filter = UEnum::GetValueAsString(Q.FilterMode);
+
+    switch (Q.FilterMode)
+    {
+        case EDeliveryQueryFilterModeV3::ByChannel:
+            return FString::Printf(TEXT("%s / Channel %s"),
+                *Mode,
+                *UEnum::GetValueAsString(Q.TraceChannel));
+
+        case EDeliveryQueryFilterModeV3::ByProfile:
+            return FString::Printf(TEXT("%s / Profile %s"),
+                *Mode,
+                *Q.CollisionProfile.Name.ToString());
+
+        case EDeliveryQueryFilterModeV3::ByObjectType:
+        {
+            FString Obj;
+            for (auto C : Q.ObjectTypes)
+            {
+                if (!Obj.IsEmpty()) Obj += TEXT(",");
+                Obj += UEnum::GetValueAsString(C);
+            }
+            return FString::Printf(TEXT("%s / ObjectType [%s]"), *Mode, *Obj);
+        }
+    }
+
+    return Mode;
+}
+
+static FString ToString(const FDeliveryAnchorRefV3& A)
+{
+    FString S = UEnum::GetValueAsString(A.Kind);
+
+    if (A.Kind == EDeliveryAnchorRefKindV3::EmitterIndex)
+        S += FString::Printf(TEXT("(%d)"), A.EmitterIndex);
+    else if (A.Kind == EDeliveryAnchorRefKindV3::PrimitiveId)
+        S += FString::Printf(TEXT("(%s)"), *A.TargetPrimitiveId.ToString());
+
+    S += FString::Printf(TEXT(" Follow=%s"),
+        *UEnum::GetValueAsString(A.FollowMode));
+
+    return S;
+}
+
+static FString ToStringEvents(const FDeliveryPrimitiveSpecV3& P)
+{
+    TArray<FString> E;
+
+    if (P.Events.bEmitStarted) E.Add(TEXT("Started"));
+    if (P.Events.bEmitStopped) E.Add(TEXT("Stopped"));
+    if (P.Events.bEmitHit)     E.Add(TEXT("Hit"));
+
+    if (P.Kind == EDeliveryKindV3::Field)
+    {
+        if (P.FieldEvents.bEmitEnter) E.Add(TEXT("Enter"));
+        if (P.FieldEvents.bEmitExit)  E.Add(TEXT("Exit"));
+        if (P.FieldEvents.bEmitStay)  E.Add(TEXT("Stay"));
+    }
+
+    return FString::Join(E, TEXT(","));
+}
+
 
 static void WarnWeirdKindQueryCombo(const FDeliveryPrimitiveSpecV3& P)
 {
@@ -243,6 +349,77 @@ static bool IsShapeEffectivelyUnset(const FDeliveryShapeV3& S)
         default:                         return true;
     }
 }
+
+static void ApplyKindDefaultEventPolicy(FDeliveryPrimitiveSpecV3& P)
+{
+	// Only apply if enabled
+	if (!P.Events.bUseKindDefaults)
+	{
+		return;
+	}
+
+	// Baseline: sensible default for all
+	P.Events.bEmitStarted = true;
+	P.Events.bEmitStopped = true;
+
+	// Tick is usually the #1 spam source -> default depends on kind
+	P.Events.bEmitTick = false;
+
+	// Hit default depends on kind
+	P.Events.bEmitHit = true;
+
+	// Field/Beam have enter/exit/stay policy
+	const bool bHasFieldStyleEvents =
+		(P.Kind == EDeliveryKindV3::Field) || (P.Kind == EDeliveryKindV3::Beam);
+
+	if (bHasFieldStyleEvents)
+	{
+		// “Zone-style” defaults
+		P.FieldEvents.bEmitEnter = true;
+		P.FieldEvents.bEmitExit  = true;
+		P.FieldEvents.bEmitStay  = false;
+
+		// For fields/beams: allow Hit by default (Hit can mean "anything inside")
+		P.Events.bEmitHit = true;
+
+		// Tick default: off (you can enable when needed)
+		P.Events.bEmitTick = false;
+	}
+	else
+	{
+		// Non-field kinds: these flags exist but are irrelevant; no need to touch FieldEvents
+	}
+
+	switch (P.Kind)
+	{
+	case EDeliveryKindV3::Mover:
+		// projectiles: tick often useful for motion/debug, but still spammy
+		P.Events.bEmitTick = true;
+		P.Events.bEmitHit  = true;
+		break;
+
+	case EDeliveryKindV3::InstantQuery:
+		// one-shot query: tick makes no sense
+		P.Events.bEmitTick = false;
+		P.Events.bEmitHit  = true;
+		break;
+
+	case EDeliveryKindV3::Beam:
+		// continuous: you usually want hit/enter/exit, tick optional
+		P.Events.bEmitTick = false;
+		P.Events.bEmitHit  = true;
+		break;
+
+	case EDeliveryKindV3::Field:
+		P.Events.bEmitTick = false;
+		P.Events.bEmitHit  = true;
+		break;
+
+	default:
+		break;
+	}
+}
+
 
 static void ApplyPrimitiveKindDefaults(FDeliveryPrimitiveSpecV3& P)
 {
@@ -633,11 +810,8 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 
 	for (FDeliveryPrimitiveSpecV3& P : Group->GroupSpec.Primitives)
 	{
+		ApplyKindDefaultEventPolicy(P);
 		ApplyPrimitiveKindDefaults(P);
-	}
-	
-	for (FDeliveryPrimitiveSpecV3& P : Group->GroupSpec.Primitives) // oder wo du Spec kopierst
-	{
 		FixupQueryPolicy(P.Query);
 	}
 	
@@ -703,6 +877,39 @@ bool UDeliverySubsystemV3::StartDelivery(const FSpellExecContextV3& Ctx, const F
 	
 	ActiveGroups.Add(Handle, Group);
 	OutHandle = Handle;
+	
+	if (CVarIMOPDeliveryValidationLog.GetValueOnGameThread() > 0)
+	{
+		UE_LOG(LogIMOPDeliveryV3, Display,
+			TEXT("[DeliveryValidate] Group=%s Runtime=%s"),
+			*Spec.DeliveryId.ToString(),
+			*RuntimeGuid.ToString());
+
+		for (const FDeliveryPrimitiveSpecV3& P : Group->GroupSpec.Primitives)
+		{
+			UE_LOG(LogIMOPDeliveryV3, Display,
+				TEXT("  Primitive %s  Kind=%s"),
+				*P.PrimitiveId.ToString(),
+				*UEnum::GetValueAsString(P.Kind));
+
+			UE_LOG(LogIMOPDeliveryV3, Display,
+				TEXT("    Shape=%s"),
+				*ToString(P.Shape));
+
+			UE_LOG(LogIMOPDeliveryV3, Display,
+				TEXT("    Query=%s"),
+				*ToString(P.Query));
+
+			UE_LOG(LogIMOPDeliveryV3, Display,
+				TEXT("    Anchor=%s"),
+				*ToString(P.Anchor));
+
+			UE_LOG(LogIMOPDeliveryV3, Display,
+				TEXT("    Events=%s"),
+				*ToStringEvents(P));
+		}
+	}
+
 
 	return true;
 }

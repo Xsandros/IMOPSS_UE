@@ -5,6 +5,7 @@
 
 #include "Delivery/DeliveryTypesV3.h"
 #include "Delivery/DeliveryContextV3.h"
+#include "DrawDebugHelpers.h"
 
 #include "Events/SpellEventV3.h"
 #include "Events/SpellEventBusSubsystemV3.h"
@@ -28,6 +29,7 @@ class UDeliveryGroupRuntimeV3;
  *  - Drivers are owned by DeliverySubsystemV3 / GroupRuntime and are server-authoritative.
  *  - Drivers keep minimal state + can read/write Group->Blackboard and Group->PrimitiveCtxById.
  */
+
 UCLASS(Abstract)
 class IMOPSPELLSYSTEMRUNTIME_API UDeliveryDriverBaseV3 : public UObject
 {
@@ -77,66 +79,169 @@ protected:
 		return nullptr;
 	}
 
-	void EmitPrimitiveEvent(const FSpellExecContextV3& Ctx, const FGameplayTag& Tag, float Magnitude = 0.f, const FGameplayTagContainer& ExtraTags = FGameplayTagContainer()) const
+	void EmitPrimitiveEvent(
+		const FSpellExecContextV3& Ctx,
+		const FGameplayTag& Tag,
+		float Magnitude,
+		const FGameplayTagContainer& ExtraTags
+	) const
 	{
 		USpellEventBusSubsystemV3* Bus = ResolveEventBus(Ctx);
-		if (!Bus)
-		{
-			return;
-		}
+		if (!Bus) { return; }
 
 		FSpellEventV3 Ev;
 		Ev.RuntimeGuid = ResolveRuntimeGuid(Ctx);
-		Ev.EventTag = Tag;
-		Ev.Caster = Ctx.GetCaster();
-		Ev.Magnitude = Magnitude;
+		Ev.EventTag    = Tag;
+		Ev.Caster      = Ctx.GetCaster();
+		Ev.Magnitude   = Magnitude;
 
-		// Always include identity tags (very useful for debugging, stop policies later)
+		// Only add tags that are guaranteed to exist:
 		Ev.Tags = ExtraTags;
 
-		// NOTE (Context Route): Do NOT request/append gameplay tags like Spell.Delivery.* here.
-		// Delivery identity is carried via Ev.DeliveryHandle / Ev.DeliveryPrimitiveId.
+		// IMPORTANT: Avoid RequestGameplayTag() here (can ensure if not registered).
+		// If you have explicit fields for identity in FSpellEventV3, set them here.
+		// Example (only if those fields exist in your struct):
+		// Ev.DeliveryHandle = GroupHandle;
+		// Ev.DeliveryPrimitiveId = PrimitiveId;
 
-
-		// NEW: delivery identity
-		Ev.DeliveryHandle = GroupHandle;
-		Ev.DeliveryPrimitiveId = PrimitiveId;
-		
 		Bus->Emit(Ev);
 	}
 
-	void EmitPrimitiveStarted(const FSpellExecContextV3& Ctx) const
+	void EmitPrimitiveStarted(const FSpellExecContextV3& Ctx, const FGameplayTagContainer& ExtraTags) const
 	{
-		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Started);
+		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Started, 0.f, ExtraTags);
 	}
 
-	void EmitPrimitiveStopped(const FSpellExecContextV3& Ctx, EDeliveryStopReasonV3 /*Reason*/) const
+	void EmitPrimitiveStopped(const FSpellExecContextV3& Ctx, EDeliveryStopReasonV3 /*Reason*/, const FGameplayTagContainer& ExtraTags) const
 	{
-		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Stopped);
+		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Stopped, 0.f, ExtraTags);
 	}
 
-	void EmitPrimitiveTick(const FSpellExecContextV3& Ctx, float DeltaSeconds) const
+	void EmitPrimitiveTick(const FSpellExecContextV3& Ctx, float DeltaSeconds, const FGameplayTagContainer& ExtraTags) const
 	{
-		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Tick, DeltaSeconds);
+		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Tick, DeltaSeconds, ExtraTags);
 	}
 
-	void EmitPrimitiveHit(const FSpellExecContextV3& Ctx, float Magnitude = 1.f, UObject* /*OptionalPayload*/ = nullptr) const
+	void EmitPrimitiveHit(const FSpellExecContextV3& Ctx, float Magnitude, UObject* /*OptionalPayload*/, const FGameplayTagContainer& ExtraTags) const
 	{
-		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Hit, Magnitude);
+		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Hit, Magnitude, ExtraTags);
 	}
 
-	void EmitPrimitiveEnter(const FSpellExecContextV3& Ctx) const
+	void EmitPrimitiveEnter(const FSpellExecContextV3& Ctx, const FGameplayTagContainer& ExtraTags) const
 	{
-		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Enter);
+		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Enter, 0.f, ExtraTags);
 	}
 
-	void EmitPrimitiveStay(const FSpellExecContextV3& Ctx) const
+	void EmitPrimitiveStay(const FSpellExecContextV3& Ctx, const FGameplayTagContainer& ExtraTags) const
 	{
-		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Stay);
+		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Stay, 0.f, ExtraTags);
 	}
 
-	void EmitPrimitiveExit(const FSpellExecContextV3& Ctx) const
+	void EmitPrimitiveExit(const FSpellExecContextV3& Ctx, const FGameplayTagContainer& ExtraTags) const
 	{
-		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Exit);
+		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Exit, 0.f, ExtraTags);
 	}
+
+	
+	protected:
+    bool IsDebugDrawEnabled() const
+    {
+        // declare as extern if needed, or duplicate a CVar in base
+        static const auto* CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("imop.Delivery.DebugDraw"));
+        return CVar && CVar->GetValueOnGameThread() > 0;
+    }
+
+    float GetDebugDrawLife() const
+    {
+        static const auto* CVar = IConsoleManager::Get().FindTConsoleVariableDataFloat(TEXT("imop.Delivery.DebugDrawLife"));
+        return CVar ? CVar->GetValueOnGameThread() : 0.05f;
+    }
+
+	void DebugDrawPrimitiveShape(
+		UWorld* World,
+		const FDeliveryPrimitiveSpecV3& Spec,
+		const FTransform& PoseWS,
+		const FDeliveryDebugDrawConfigV3& DebugCfg
+	) const
+    {
+    	if (!World || !ShouldOverlayDraw(DebugCfg))
+    	{
+    		return;
+    	}
+
+    	const float Life = (IsOverlayCVarEnabled() ? GetOverlayLife() : DebugCfg.Duration);
+
+    	const FString Label = FString::Printf(TEXT("%s | %s"),
+			*Spec.PrimitiveId.ToString(),
+			*UEnum::GetValueAsString(Spec.Kind));
+
+    	DrawDebugString(World, PoseWS.GetLocation(), Label, nullptr, FColor::White, Life, false);
+
+    	switch (Spec.Shape.Kind)
+    	{
+    	case EDeliveryShapeV3::Sphere:
+    		DrawDebugSphere(World, PoseWS.GetLocation(), Spec.Shape.Radius, 12, FColor::White, false, Life);
+    		break;
+    	case EDeliveryShapeV3::Box:
+    		DrawDebugBox(World, PoseWS.GetLocation(), Spec.Shape.Extents, PoseWS.GetRotation(), FColor::White, false, Life);
+    		break;
+    	case EDeliveryShapeV3::Capsule:
+    		DrawDebugCapsule(World, PoseWS.GetLocation(), Spec.Shape.HalfHeight, Spec.Shape.CapsuleRadius, PoseWS.GetRotation(), FColor::White, false, Life);
+    		break;
+    	case EDeliveryShapeV3::Ray:
+    		{
+    			const FVector Start = PoseWS.GetLocation();
+    			const FVector End   = Start + PoseWS.GetRotation().GetForwardVector() * Spec.Shape.RayLength;
+    			DrawDebugLine(World, Start, End, FColor::White, false, Life, 0, 1.5f);
+    			break;
+    		}
+    	default:
+    		break;
+    	}
+    }
+
+
+	void DebugDrawBeamLine(
+	  UWorld* World,
+	  const FDeliveryPrimitiveSpecV3& Spec,
+	  const FVector& StartWS,
+	  const FVector& EndWS,
+	  const FDeliveryDebugDrawConfigV3& DebugCfg
+  ) const
+    {
+    	if (!World || !ShouldOverlayDraw(DebugCfg))
+    	{
+    		return;
+    	}
+
+    	const float Life = (IsOverlayCVarEnabled() ? GetOverlayLife() : DebugCfg.Duration);
+
+    	const FString Label = FString::Printf(TEXT("%s | %s"),
+			*Spec.PrimitiveId.ToString(),
+			*UEnum::GetValueAsString(Spec.Kind));
+
+    	DrawDebugLine(World, StartWS, EndWS, FColor::White, false, Life, 0, 1.5f);
+    	DrawDebugString(World, StartWS, Label, nullptr, FColor::White, Life, false);
+    }
+
+protected:
+	bool IsOverlayCVarEnabled() const
+	{
+		static const auto* CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("imop.Delivery.DebugDraw"));
+		return CVar && CVar->GetValueOnGameThread() > 0;
+	}
+
+	float GetOverlayLife() const
+	{
+		static const auto* CVar = IConsoleManager::Get().FindTConsoleVariableDataFloat(TEXT("imop.Delivery.DebugDrawLife"));
+		return CVar ? CVar->GetValueOnGameThread() : 0.05f;
+	}
+
+	template<typename TDebugCfg>
+	bool ShouldOverlayDraw(const TDebugCfg& DebugCfg) const
+	{
+		return IsOverlayCVarEnabled() || DebugCfg.bEnabled;
+	}
+
+
 };

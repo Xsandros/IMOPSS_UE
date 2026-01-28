@@ -239,11 +239,14 @@ struct FDeliveryMoverConfigV3
 	int32 MaxPierceHits = 0; // 0 = infinite
 
 	// Homing
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover")
-	FName HomingTargetSet = NAME_None;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover",
+			  meta=(EditCondition="Motion==EMoverMotionKindV3::Homing", EditConditionHides))
+	FName HomingTargetSet;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover")
-	float HomingStrength = 8.f; // how quickly we turn
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Mover",
+			  meta=(EditCondition="Motion==EMoverMotionKindV3::Homing", EditConditionHides))
+	float HomingStrength = 1.0f;
+
 };
 
 USTRUCT(BlueprintType)
@@ -287,23 +290,31 @@ struct FDeliveryEventPolicyV3
 	bool bEmitStopped = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bEmitTick = true; // NEW (empfohlen, damit Tick nicht immer spammt)
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
 	bool bEmitHit = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events",
-			  meta=(EditCondition="bIsField", EditConditionHides))
-	bool bEmitEnter = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events",
-			  meta=(EditCondition="bIsField", EditConditionHides))
-	bool bEmitExit = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events",
-			  meta=(EditCondition="bIsField", EditConditionHides))
-	bool bEmitStay = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
 	FGameplayTagContainer ExtraTags;
 };
+
+
+USTRUCT(BlueprintType)
+struct FDeliveryFieldEventPolicyV3
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bEmitEnter = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bEmitExit = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Events")
+	bool bEmitStay = false;
+};
+
 
 USTRUCT(BlueprintType)
 struct FDeliveryPrimitiveSpecV3
@@ -355,14 +366,20 @@ struct FDeliveryPrimitiveSpecV3
 	FName OutTargetSetName = NAME_None;
 
 	// Debug override
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug")
 	bool bOverrideDebugDraw = false;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Debug",
+			  meta=(EditCondition="bOverrideDebugDraw", EditConditionHides))
 	FDeliveryDebugDrawConfigV3 DebugDrawOverride;
+
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryEventPolicyV3 Events;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+		  meta=(EditCondition="Kind==EDeliveryKindV3::Field || Kind==EDeliveryKindV3::Beam", EditConditionHides))
+	FDeliveryFieldEventPolicyV3 FieldEvents;
 
 	
 
@@ -383,14 +400,17 @@ struct FDeliverySpecV3
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
 	FDeliveryAttachV3 Attach;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(DisplayName="Anchor Rig", ToolTip="Optional anchor provider. Supplies Root + EmitterIndex transforms (e.g. Hand/Muzzle/Camera) used by Primitive Anchors. Not a primitive graph."))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Rig", meta=(AdvancedDisplay))
 	TObjectPtr<UDeliveryRigV3> Rig = nullptr;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Pose")
 	EDeliveryPoseUpdatePolicyV3 PoseUpdatePolicy = EDeliveryPoseUpdatePolicyV3::EveryTick;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Pose",
+			  meta=(EditCondition="PoseUpdatePolicy==EDeliveryPoseUpdatePolicyV3::Interval", EditConditionHides))
 	float PoseUpdateInterval = 0.05f;
+
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Group")
 	FName OutTargetSetDefault = NAME_None;

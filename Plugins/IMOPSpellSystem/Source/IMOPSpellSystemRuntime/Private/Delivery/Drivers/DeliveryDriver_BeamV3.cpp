@@ -80,7 +80,11 @@ void UDeliveryDriver_BeamV3::Start(const FSpellExecContextV3& Ctx, UDeliveryGrou
 	TimeSinceLastEval = 0.f;
 	InsideSet.Reset();
 
-	EmitPrimitiveStarted(Ctx);
+	if (LocalCtx.Spec.Events.bEmitStarted)
+	{
+		EmitPrimitiveStarted(Ctx, LocalCtx.Spec.Events.ExtraTags);
+	}
+
 
 	// Evaluate immediately so beam is “live” on start
 	EvaluateBeam(Ctx, Group);
@@ -93,7 +97,11 @@ void UDeliveryDriver_BeamV3::Tick(const FSpellExecContextV3& Ctx, UDeliveryGroup
 		return;
 	}
 
-	EmitPrimitiveTick(Ctx, DeltaSeconds);
+	if (LocalCtx.Spec.Events.bEmitTick)
+	{
+		EmitPrimitiveTick(Ctx, DeltaSeconds, LocalCtx.Spec.Events.ExtraTags);
+	}
+
 
 	TimeSinceLastEval += DeltaSeconds;
 
@@ -136,7 +144,12 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 
 	const float Range = FMath::Max(0.f, B.Range);
 	const FVector End = Origin + Dir * Range;
+	const FDeliveryDebugDrawConfigV3& DebugCfg = LocalCtx.DebugCfg;
 
+	// NEW: overlay debug (beam line + id/kind)
+	DebugDrawBeamLine(World, Spec, Origin, End, DebugCfg);
+
+	
 	// Collision profile
 	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
 		? Spec.Query.CollisionProfile.Name
@@ -252,19 +265,25 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 		}
 	}
 
-	if (EnterCount > 0)
+	if (EnterCount > 0 && Spec.FieldEvents.bEmitEnter)
 	{
-		EmitPrimitiveEnter(Ctx);
+		EmitPrimitiveEnter(Ctx, Spec.Events.ExtraTags);
 	}
-	if (ExitCount > 0)
+	if (ExitCount > 0 && Spec.FieldEvents.bEmitExit)
 	{
-		EmitPrimitiveExit(Ctx);
+		EmitPrimitiveExit(Ctx, Spec.Events.ExtraTags);
 	}
 
 	if (NewInside.Num() > 0)
 	{
-		EmitPrimitiveStay(Ctx);
-		EmitPrimitiveHit(Ctx, (float)NewInside.Num(), nullptr);
+		if (Spec.FieldEvents.bEmitStay)
+		{
+			EmitPrimitiveStay(Ctx, Spec.Events.ExtraTags);
+		}
+		if (Spec.Events.bEmitHit)
+		{
+			EmitPrimitiveHit(Ctx, (float)NewInside.Num(), nullptr, Spec.Events.ExtraTags);
+		}
 	}
 
 	UE_LOG(LogIMOPDeliveryBeamV3, Verbose, TEXT("Beam Eval: %s/%s hits=%d inside=%d any=%d"),
@@ -283,7 +302,11 @@ void UDeliveryDriver_BeamV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroup
 	bActive = false;
 	InsideSet.Reset();
 
-	EmitPrimitiveStopped(Ctx, Reason);
+	if (LocalCtx.Spec.Events.bEmitStopped)
+	{
+		EmitPrimitiveStopped(Ctx, Reason, LocalCtx.Spec.Events.ExtraTags);
+	}
+
 
 	UE_LOG(LogIMOPDeliveryBeamV3, Log, TEXT("Beam stopped: %s/%s inst=%d reason=%d"),
 		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), GroupHandle.InstanceIndex, (int32)Reason);

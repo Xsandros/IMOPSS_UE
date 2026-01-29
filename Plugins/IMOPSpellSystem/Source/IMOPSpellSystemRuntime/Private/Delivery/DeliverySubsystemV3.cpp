@@ -3,6 +3,7 @@
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/Rig/DeliveryRigEvaluatorV3.h"
 #include "Delivery/Motion/DeliveryMotionTypesV3.h"
+#include "Core/SpellGameplayTagsV3.h"
 
 #include "Delivery/Drivers/DeliveryDriverBaseV3.h"
 #include "Delivery/Drivers/DeliveryDriver_InstantQueryV3.h"
@@ -748,10 +749,97 @@ void UDeliverySubsystemV3::OnSpellEvent(const FSpellEventV3& Ev)
 		return;
 	}
 
-	const FString TagStr = Ev.EventTag.ToString();
-	if (TagStr.Contains(TEXT("End")) || TagStr.Contains(TEXT("Ended")) || TagStr.Contains(TEXT("Stop")))
+	// 1) Hard stop for spell end only (precise, no string contains)
+	if (Ev.EventTag == FIMOPSpellGameplayTagsV3::Get().Event_Spell_End)
 	{
 		StopAllForRuntimeGuid(Ev.RuntimeGuid, EDeliveryStopReasonV3::OnEvent);
+		return;
+	}
+
+	// 2) Per-primitive stop-on-event policies (Model 1)
+	// We evaluate only groups of this runtime (optionally narrowed to Ev.DeliveryHandle if policy requires same group).
+	TArray<FDeliveryHandleV3> Handles;
+	GetActiveHandles(Handles);
+
+	for (const FDeliveryHandleV3& H : Handles)
+	{
+		if (H.RuntimeGuid != Ev.RuntimeGuid)
+		{
+			continue;
+		}
+
+		UDeliveryGroupRuntimeV3* Group = ActiveGroups.FindRef(H);
+		if (!Group)
+		{
+			continue;
+		}
+
+		// Evaluate policies against the group spec (stable list, safe to stop during loop)
+		for (const FDeliveryPrimitiveSpecV3& PSpec : Group->GroupSpec.Primitives)
+		{
+			if (!PSpec.StopOnEvent.bEnabled)
+			{
+				continue;
+			}
+
+			// Same-group constraint
+			if (PSpec.StopOnEvent.bRequireSameGroup)
+			{
+				// Event must carry a delivery handle to compare; if not present, fail the constraint
+				if (!Ev.DeliveryHandle.RuntimeGuid.IsValid() || Ev.DeliveryHandle.DeliveryId == NAME_None)
+				{
+					continue;
+				}
+				if (!(Ev.DeliveryHandle == Group->GroupHandle))
+				{
+					continue;
+				}
+			}
+
+			// Emitter primitive constraint
+			if (PSpec.StopOnEvent.bRequireEmitterPrimitive)
+			{
+				if (PSpec.StopOnEvent.EmitterPrimitiveId == NAME_None)
+				{
+					continue;
+				}
+				if (Ev.DeliveryPrimitiveId != PSpec.StopOnEvent.EmitterPrimitiveId)
+				{
+					continue;
+				}
+			}
+
+			// Tag match
+			bool bTagMatch = false;
+			if (PSpec.StopOnEvent.MatchMode == EDeliveryTagMatchModeV3::Exact)
+			{
+				bTagMatch = (Ev.EventTag == PSpec.StopOnEvent.EventTag);
+			}
+			else
+			{
+				bTagMatch = Ev.EventTag.MatchesTag(PSpec.StopOnEvent.EventTag);
+			}
+
+			if (!bTagMatch)
+			{
+				continue;
+			}
+
+			// Required extra tags
+			if (!Ev.Tags.HasAll(PSpec.StopOnEvent.RequiredEventTags))
+			{
+				continue;
+			}
+
+			// Stop the target primitive (independent!)
+			StopPrimitiveInGroup(Group->CtxSnapshot, Group, PSpec.PrimitiveId, EDeliveryStopReasonV3::OnEvent);
+
+			// Group may be auto-removed when last primitive dies (Model 1), so guard pointer usage
+			if (!ActiveGroups.Contains(H))
+			{
+				break;
+			}
+		}
 	}
 }
 

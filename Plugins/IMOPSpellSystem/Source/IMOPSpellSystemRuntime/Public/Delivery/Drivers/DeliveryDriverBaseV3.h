@@ -10,6 +10,7 @@
 #include "Events/SpellEventV3.h"
 #include "Events/SpellEventBusSubsystemV3.h"
 #include "Core/SpellGameplayTagsV3.h"
+#include "Delivery/DeliverySubsystemV3.h"
 #include "Runtime/SpellRuntimeV3.h"
 
 #include "DeliveryDriverBaseV3.generated.h"
@@ -124,6 +125,12 @@ protected:
 
 	void EmitPrimitiveHit(const FSpellExecContextV3& Ctx, float Magnitude, UObject* /*OptionalPayload*/, const FGameplayTagContainer& ExtraTags) const
 	{
+		UE_LOG(LogIMOPDeliveryV3, Display,
+	TEXT("Emit HIT: prim=%s mag=%.1f tag=%s"),
+	*PrimitiveId.ToString(),
+	Magnitude,
+	*FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Hit.ToString());
+
 		EmitPrimitiveEvent(Ctx, FIMOPSpellGameplayTagsV3::Get().Event_Delivery_Primitive_Hit, Magnitude, ExtraTags);
 	}
 

@@ -251,6 +251,8 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	if (Hits.Num() > 0 && Spec.Events.bEmitHit)
 	{
 		EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr, Spec.Events.ExtraTags);
+		UE_LOG(LogIMOPDeliveryInstantQueryV3, Display, TEXT("InstantQuery hits: %d (EmitHit=%d)"), Hits.Num(), Spec.Events.bEmitHit ? 1 : 0);
+
 	}
 
 

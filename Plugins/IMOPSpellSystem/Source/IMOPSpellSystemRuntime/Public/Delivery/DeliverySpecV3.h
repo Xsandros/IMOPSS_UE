@@ -315,6 +315,45 @@ struct FDeliveryFieldEventPolicyV3
 	bool bEmitStay = false;
 };
 
+UENUM(BlueprintType)
+enum class EDeliveryTagMatchModeV3 : uint8
+{
+	Exact,
+	MatchesTag // hierarchical (GameplayTags MatchesTag)
+};
+
+USTRUCT(BlueprintType)
+struct FDeliveryStopOnEventPolicyV3
+{
+	GENERATED_BODY()
+
+	// Master switch
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop")
+	bool bEnabled = false;
+
+	// Which event stops this primitive
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop", meta=(EditCondition="bEnabled", EditConditionHides))
+	FGameplayTag EventTag;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop", meta=(EditCondition="bEnabled", EditConditionHides))
+	EDeliveryTagMatchModeV3 MatchMode = EDeliveryTagMatchModeV3::Exact;
+
+	// Optional: require the event to come from the same delivery group
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop", meta=(EditCondition="bEnabled", EditConditionHides))
+	bool bRequireSameGroup = true;
+
+	// Optional: require the event to come from a specific emitter primitive id
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop", meta=(EditCondition="bEnabled", EditConditionHides))
+	bool bRequireEmitterPrimitive = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop", meta=(EditCondition="bEnabled && bRequireEmitterPrimitive", EditConditionHides))
+	FName EmitterPrimitiveId = NAME_None;
+
+	// Optional: require extra tags on the event (Ev.Tags must contain all)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Stop", meta=(EditCondition="bEnabled", EditConditionHides))
+	FGameplayTagContainer RequiredEventTags;
+};
+
 
 USTRUCT(BlueprintType)
 struct FDeliveryPrimitiveSpecV3
@@ -376,12 +415,13 @@ struct FDeliveryPrimitiveSpecV3
 	
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
 	FDeliveryEventPolicyV3 Events;
-	
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
-		  meta=(EditCondition="Kind==EDeliveryKindV3::Field || Kind==EDeliveryKindV3::Beam", EditConditionHides))
-	FDeliveryFieldEventPolicyV3 FieldEvents;
 
-	
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive")
+	FDeliveryStopOnEventPolicyV3 StopOnEvent;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Primitive",
+		meta=(EditCondition="Kind==EDeliveryKindV3::Field || Kind==EDeliveryKindV3::Beam", EditConditionHides))
+	FDeliveryFieldEventPolicyV3 FieldEvents;
 
 };
 

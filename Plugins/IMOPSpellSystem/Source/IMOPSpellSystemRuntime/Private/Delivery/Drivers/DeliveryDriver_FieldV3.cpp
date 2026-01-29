@@ -227,36 +227,33 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 
 	// ===== Events
 	// Enter/Exit (optional)
-	if (Spec.Field.bEmitEnterExit)
+	// Enter/Exit (optional)
+	const bool bWantEnterExit = (Spec.FieldEvents.bEmitEnter || Spec.FieldEvents.bEmitExit);
+	if (bWantEnterExit)
 	{
 		int32 EnterCount = 0;
 		for (const TWeakObjectPtr<AActor>& W : NewSet)
 		{
-			if (!CurrentSet.Contains(W))
-			{
-				EnterCount++;
-			}
+			if (!CurrentSet.Contains(W)) { EnterCount++; }
 		}
 
 		int32 ExitCount = 0;
 		for (const TWeakObjectPtr<AActor>& W : CurrentSet)
 		{
-			if (!NewSet.Contains(W))
-			{
-				ExitCount++;
-			}
+			if (!NewSet.Contains(W)) { ExitCount++; }
 		}
 
 		if (EnterCount > 0 && Spec.FieldEvents.bEmitEnter)
 		{
 			EmitPrimitiveEnter(Ctx, Spec.Events.ExtraTags);
 		}
+
 		if (ExitCount > 0 && Spec.FieldEvents.bEmitExit)
 		{
 			EmitPrimitiveExit(Ctx, Spec.Events.ExtraTags);
 		}
-
 	}
+
 
 	// Stay + Hit semantics
 	if (NewSet.Num() > 0)
@@ -271,8 +268,9 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 		}
 	}
 
-	UE_LOG(LogIMOPDeliveryFieldV3, Verbose, TEXT("Field Eval: %s/%s inside=%d any=%d center=%s"),
+	UE_LOG(LogIMOPDeliveryFieldV3, Display, TEXT("Field Eval: %s/%s inside=%d any=%d center=%s"),
 		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), NewSet.Num(), bAny ? 1 : 0, *Center.ToString());
+
 
 	CurrentSet = MoveTemp(NewSet);
 }

@@ -102,8 +102,8 @@ protected:
 		// IMPORTANT: Avoid RequestGameplayTag() here (can ensure if not registered).
 		// If you have explicit fields for identity in FSpellEventV3, set them here.
 		// Example (only if those fields exist in your struct):
-		// Ev.DeliveryHandle = GroupHandle;
-		// Ev.DeliveryPrimitiveId = PrimitiveId;
+		Ev.DeliveryHandle = GroupHandle;
+		Ev.DeliveryPrimitiveId = PrimitiveId;
 
 		Bus->Emit(Ev);
 	}

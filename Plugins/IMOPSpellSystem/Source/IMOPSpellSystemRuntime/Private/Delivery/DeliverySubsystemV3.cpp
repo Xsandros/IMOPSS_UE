@@ -655,7 +655,9 @@ void UDeliverySubsystemV3::Initialize(FSubsystemCollectionBase& Collection)
 		if (USpellEventBusSubsystemV3* Bus = World->GetSubsystem<USpellEventBusSubsystemV3>())
 		{
 			// Avoid overload ambiguity by explicitly selecting UObject overload
-			SpellEndSub = Bus->Subscribe(Cast<UObject>(this), FGameplayTag());
+			const FGameplayTag RootEventTag = FIMOPSpellGameplayTagsV3::Get().Event; // "Spell.Event"
+			SpellEndSub = Bus->Subscribe(Cast<UObject>(this), RootEventTag);
+
 		}
 	}
 }
@@ -748,6 +750,9 @@ void UDeliverySubsystemV3::OnSpellEvent(const FSpellEventV3& Ev)
 	{
 		return;
 	}
+	
+	UE_LOG(LogIMOPDeliveryV3, Display, TEXT("OnSpellEvent: tag=%s prim=%s"),
+	*Ev.EventTag.ToString(), *Ev.DeliveryPrimitiveId.ToString());
 
 	// 1) Hard stop for spell end only (precise, no string contains)
 	if (Ev.EventTag == FIMOPSpellGameplayTagsV3::Get().Event_Spell_End)
@@ -830,7 +835,15 @@ void UDeliverySubsystemV3::OnSpellEvent(const FSpellEventV3& Ev)
 			{
 				continue;
 			}
+			
+			UE_LOG(LogIMOPDeliveryV3, Display,
+TEXT("StopOnEvent MATCH: targetPrim=%s event=%s emitterPrim=%s group=%s"),
+*PSpec.PrimitiveId.ToString(),
+*Ev.EventTag.ToString(),
+*Ev.DeliveryPrimitiveId.ToString(),
+*Group->GroupHandle.DeliveryId.ToString());
 
+			
 			// Stop the target primitive (independent!)
 			StopPrimitiveInGroup(Group->CtxSnapshot, Group, PSpec.PrimitiveId, EDeliveryStopReasonV3::OnEvent);
 
@@ -1466,5 +1479,7 @@ bool UDeliverySubsystemV3::StopPrimitive(const FSpellExecContextV3& Ctx, const F
 		return false;
 	}
 
+	
+	
 	return StopPrimitiveInGroup(Ctx, Group, PrimitiveHandle.PrimitiveId, Reason);
 }

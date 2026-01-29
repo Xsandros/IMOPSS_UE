@@ -129,11 +129,6 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 	DebugDrawPrimitiveShape(World, Spec, LocalCtx.FinalPoseWS, DebugCfg);
 	
 	// Collision profile
-	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
-		? Spec.Query.CollisionProfile.Name
-		: FName(TEXT("OverlapAllDynamic"));
-
-
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), /*bTraceComplex*/ false);
 	if (Spec.Query.bIgnoreCaster)
 	{
@@ -149,9 +144,13 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 		case EDeliveryShapeV3::Sphere:
 			Shape = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius));
 			break;
-		case EDeliveryShapeV3::Capsule:
-			Shape = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight));
-			break;
+	case EDeliveryShapeV3::Capsule:
+		Shape = FCollisionShape::MakeCapsule(
+			FMath::Max(0.f, Spec.Shape.CapsuleRadius),
+			FMath::Max(0.f, Spec.Shape.HalfHeight)
+		);
+		break;
+
 		case EDeliveryShapeV3::Box:
 			Shape = FCollisionShape::MakeBox(Spec.Shape.Extents);
 			break;
@@ -162,26 +161,71 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 	}
 
 	TArray<FOverlapResult> Overlaps;
-	const bool bAny = World->OverlapMultiByProfile(
-		Overlaps,
-		Center,
-		FQuat::Identity,
-		Profile,
-		Shape,
-		Params
-	);
+	bool bAny = false;
+
+	switch (Spec.Query.FilterMode)
+	{
+	case EDeliveryQueryFilterModeV3::ByChannel:
+		{
+			const ECollisionChannel Ch = (ECollisionChannel)Spec.Query.TraceChannel.GetValue();
+			bAny = World->OverlapMultiByChannel(Overlaps, Center, FQuat::Identity, Ch, Shape, Params);
+			break;
+		}
+	case EDeliveryQueryFilterModeV3::ByObjectType:
+		{
+			FCollisionObjectQueryParams ObjParams;
+			for (const TEnumAsByte<ECollisionChannel>& OT : Spec.Query.ObjectTypes)
+			{
+				ObjParams.AddObjectTypesToQuery((ECollisionChannel)OT.GetValue());
+			}
+			bAny = World->OverlapMultiByObjectType(Overlaps, Center, FQuat::Identity, ObjParams, Shape, Params);
+			break;
+		}
+	case EDeliveryQueryFilterModeV3::ByProfile:
+	default:
+		{
+			const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
+				? Spec.Query.CollisionProfile.Name
+				: FName(TEXT("OverlapAllDynamic"));
+
+			bAny = World->OverlapMultiByProfile(Overlaps, Center, FQuat::Identity, Profile, Shape, Params);
+			break;
+		}
+	}
+
 
 	TSet<TWeakObjectPtr<AActor>> NewSet;
 	if (bAny)
 	{
 		for (const FOverlapResult& O : Overlaps)
 		{
-			if (AActor* A = O.GetActor())
+			AActor* A = O.GetActor();
+			UPrimitiveComponent* Comp = O.GetComponent();
+
+			if (!A || !Comp)
 			{
-				NewSet.Add(A);
+				continue;
 			}
+
+			// Strikter Component-Postfilter für ByObjectType (sonst “leaken” dir Actor rein)
+			if (Spec.Query.FilterMode == EDeliveryQueryFilterModeV3::ByObjectType)
+			{
+				const ECollisionChannel ObjType = Comp->GetCollisionObjectType();
+				bool bAllowed = false;
+				for (const TEnumAsByte<ECollisionChannel>& OT : Spec.Query.ObjectTypes)
+				{
+					if ((ECollisionChannel)OT.GetValue() == ObjType) { bAllowed = true; break; }
+				}
+				if (!bAllowed)
+				{
+					continue;
+				}
+			}
+
+			NewSet.Add(A);
 		}
 	}
+
 
 	// Debug draw
 	if (DebugCfg.bEnable && DebugCfg.bDrawShape)
@@ -228,16 +272,18 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 	// ===== Events
 	// Enter/Exit (optional)
 	// Enter/Exit (optional)
+	int32 EnterCount = 0;
+	int32 ExitCount = 0;
 	const bool bWantEnterExit = (Spec.FieldEvents.bEmitEnter || Spec.FieldEvents.bEmitExit);
 	if (bWantEnterExit)
 	{
-		int32 EnterCount = 0;
+
 		for (const TWeakObjectPtr<AActor>& W : NewSet)
 		{
 			if (!CurrentSet.Contains(W)) { EnterCount++; }
 		}
 
-		int32 ExitCount = 0;
+
 		for (const TWeakObjectPtr<AActor>& W : CurrentSet)
 		{
 			if (!NewSet.Contains(W)) { ExitCount++; }
@@ -268,8 +314,14 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 		}
 	}
 
-	UE_LOG(LogIMOPDeliveryFieldV3, Display, TEXT("Field Eval: %s/%s inside=%d any=%d center=%s"),
-		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), NewSet.Num(), bAny ? 1 : 0, *Center.ToString());
+	const bool bInteresting = (EnterCount > 0) || (ExitCount > 0);
+	if (bInteresting)
+	{
+		UE_LOG(LogIMOPDeliveryFieldV3, Display, TEXT("Field Eval: %s/%s inside=%d enter=%d exit=%d any=%d center=%s"),
+			*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(),
+			NewSet.Num(), EnterCount, ExitCount, bAny ? 1 : 0, *Center.ToString());
+	}
+
 
 
 	CurrentSet = MoveTemp(NewSet);

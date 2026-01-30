@@ -124,6 +124,15 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	{
 		return;
 	}
+	
+	const FDeliveryContextV3* Live = Group->PrimitiveCtxById.Find(PrimitiveId);
+	if (Live)
+	{
+		// Keep spec from LocalCtx (same struct anyway), but always use live poses.
+		LocalCtx.AnchorPoseWS = Live->AnchorPoseWS;
+		LocalCtx.FinalPoseWS  = Live->FinalPoseWS;
+	}
+
 
 	const FDeliveryPrimitiveSpecV3& Spec = LocalCtx.Spec;
 	const FDeliveryBeamConfigV3& B = Spec.Beam;

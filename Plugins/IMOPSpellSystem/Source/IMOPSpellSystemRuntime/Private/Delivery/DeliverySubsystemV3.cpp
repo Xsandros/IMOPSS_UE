@@ -1223,6 +1223,15 @@ bool UDeliverySubsystemV3::TryResolveAnchorPoseWS(
 		OutAnchorPoseWS = Target->FinalPoseWS;
 		return true;
 	}
+	
+	if (A.Kind == EDeliveryAnchorRefKindV3::World)
+	{
+		// World anchor means: anchor is absolute world (identity).
+		// LocalOffset/LocalRotation/LocalScale are applied as world-space transform.
+		OutAnchorPoseWS = FTransform::Identity;
+		return true;
+	}
+
 
 	// default fallback
 	OutAnchorPoseWS = Group->RigCache.RootWS;

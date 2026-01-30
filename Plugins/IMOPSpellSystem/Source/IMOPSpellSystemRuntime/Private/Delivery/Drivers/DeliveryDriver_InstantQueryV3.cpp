@@ -76,13 +76,15 @@ void UDeliveryDriver_InstantQueryV3::Start(const FSpellExecContextV3& Ctx, UDeli
 	PrimitiveId = PrimitiveCtx.PrimitiveId;
 	bActive = true;
 
-	const bool bAny = EvaluateOnce(Ctx, Group, PrimitiveCtx);
+	// Contract: Started first
 	if (PrimitiveCtx.Spec.Events.bEmitStarted)
 	{
 		EmitPrimitiveStarted(Ctx, PrimitiveCtx.Spec.Events.ExtraTags);
 	}
 
-	
+	// Then do the query and emit Hit/targets
+	const bool bAny = EvaluateOnce(Ctx, Group, PrimitiveCtx);
+
 	// Instant query ends immediately.
 	Stop(Ctx, Group, bAny ? EDeliveryStopReasonV3::OnFirstHit : EDeliveryStopReasonV3::DurationElapsed);
 }
@@ -203,78 +205,118 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	}
 
 	if (bAny)
+{
+	SortHitsDeterministic(Hits, From);
+}
+
+// Cap raw hits first (optional: keeps work bounded)
+const int32 MaxHits = FMath::Max(1, Q.MaxHits);
+if (Hits.Num() > MaxHits)
+{
+	Hits.SetNum(MaxHits);
+}
+
+// -------- NEW: Dedupe by actor (most important fix) --------
+TArray<FHitResult> UniqueHits;
+UniqueHits.Reserve(Hits.Num());
+
+TSet<FObjectKey> SeenActors;
+SeenActors.Reserve(Hits.Num());
+
+auto ResolveHitActor = [](const FHitResult& H) -> AActor*
+{
+	if (AActor* A = H.GetActor())
 	{
-		SortHitsDeterministic(Hits, From);
+		return A;
+	}
+	if (const UPrimitiveComponent* C = H.GetComponent())
+	{
+		return C->GetOwner();
+	}
+	return nullptr;
+};
+
+for (const FHitResult& H : Hits)
+{
+	AActor* A = ResolveHitActor(H);
+	if (!A)
+	{
+		continue;
 	}
 
-	// MultiHit behavior:
-	// - If bMultiHit=false, still do multi trace (deterministic), but cap to 1.
-	// - Then cap to MaxHits.
-	if (!Q.bMultiHit && Hits.Num() > 1)
+	const FObjectKey Key(A);
+	if (SeenActors.Contains(Key))
 	{
-		Hits.SetNum(1);
+		continue;
 	}
 
-	const int32 MaxHits = FMath::Max(1, Q.MaxHits);
-	if (Hits.Num() > MaxHits)
+	SeenActors.Add(Key);
+	UniqueHits.Add(H);
+}
+
+// If author wants single hit, enforce single *actor*
+if (!Q.bMultiHit && UniqueHits.Num() > 1)
+{
+	UniqueHits.SetNum(1);
+}
+
+// If MaxHits should cap unique targets (more intuitive)
+if (UniqueHits.Num() > MaxHits)
+{
+	UniqueHits.SetNum(MaxHits);
+}
+
+// -------- Debug draw should use UniqueHits (optional but consistent) --------
+const FDeliveryDebugDrawConfigV3 DebugCfg2 = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+if (DebugCfg2.bEnable)
+{
+	const float Dur = DebugCfg2.Duration;
+	if (DebugCfg2.bDrawPath)
 	{
-		Hits.SetNum(MaxHits);
+		DrawDebugLine(World, From, To, FColor::Cyan, false, Dur, 0, 2.0f);
+		DrawDebugDirectionalArrow(World, From, From + Dir * 120.f, 25.f, FColor::Cyan, false, Dur, 0, 2.0f);
 	}
-
-	// Debug draw
-	if (DebugCfg.bEnable)
+	if (DebugCfg2.bDrawHits)
 	{
-		const float Dur = DebugCfg.Duration;
-
-		if (DebugCfg.bDrawPath)
+		for (const FHitResult& H : UniqueHits)
 		{
-			DrawDebugLine(World, From, To, FColor::Cyan, false, Dur, 0, 2.0f);
-			DrawDebugDirectionalArrow(World, From, From + Dir * 120.f, 25.f, FColor::Cyan, false, Dur, 0, 2.0f);
+			DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, Dur);
 		}
+	}
+}
 
-		if (DebugCfg.bDrawHits)
+// Write hits to TargetStore (optional) – use UniqueHits
+const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
+if (OutSetName != NAME_None)
+{
+	if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
+	{
+		FTargetSetV3 Out;
+		for (const FHitResult& H : UniqueHits)
 		{
-			for (const FHitResult& H : Hits)
+			if (AActor* A = ResolveHitActor(H))
 			{
-				DrawDebugPoint(World, H.ImpactPoint, 10.f, FColor::Red, false, Dur);
+				FTargetRefV3 R;
+				R.Actor = A;
+				Out.AddUnique(R);
 			}
 		}
+		Store->Set(OutSetName, Out);
 	}
+}
 
-	// Write hits to TargetStore (optional)
-	const FName OutSetName = ResolveOutTargetSetName(Group, PrimitiveCtx);
-	if (OutSetName != NAME_None)
-	{
-		if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
+// Emit hit magnitude based on unique actors
+if (UniqueHits.Num() > 0 && Spec.Events.bEmitHit)
+{
+	EmitPrimitiveHit(Ctx, (float)UniqueHits.Num(), nullptr, Spec.Events.ExtraTags);
+}
 
-		{
-			FTargetSetV3 Out;
-			for (const FHitResult& H : Hits)
-			{
-				if (AActor* A = H.GetActor())
-				{
-					FTargetRefV3 R;
-					R.Actor = A;
-					Out.AddUnique(R);
-				}
-			}
-			Store->Set(OutSetName, Out);
-		}
-	}
+UE_LOG(LogIMOPDeliveryInstantQueryV3, Display, TEXT("InstantQuery hits: %d (EmitHit=%d)"),
+	UniqueHits.Num(),
+	(Spec.Events.bEmitHit ? 1 : 0));
 
-	if (Hits.Num() > 0 && Spec.Events.bEmitHit)
-	{
-		EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr, Spec.Events.ExtraTags);
-		UE_LOG(LogIMOPDeliveryInstantQueryV3, Display, TEXT("InstantQuery hits: %d (EmitHit=%d)"), Hits.Num(), Spec.Events.bEmitHit ? 1 : 0);
-	}
+return UniqueHits.Num() > 0;
 
-	UE_LOG(LogIMOPDeliveryInstantQueryV3, Verbose, TEXT("InstantQuery: %s/%s hits=%d any=%d"),
-		*GroupHandle.DeliveryId.ToString(),
-		*PrimitiveId.ToString(),
-		Hits.Num(),
-		bAny ? 1 : 0);
-
-	return bAny;
 }
 
 

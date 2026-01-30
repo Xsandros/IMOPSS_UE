@@ -2,6 +2,8 @@
 
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
+#include "Delivery/Helpers/DeliveryQueryHelpersV3.h"
+#include "Delivery/Helpers/DeliveryShapeHelpersV3.h"
 
 #include "Actions/SpellActionExecutorV3.h"
 #include "Stores/SpellTargetStoreV3.h"
@@ -104,60 +106,54 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 	TArray<FHitResult>& OutHits) const
 {
 	OutHits.Reset();
-
 	if (!World)
 	{
 		return false;
 	}
 
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Mover), /*bTraceComplex*/ false);
-	if (Spec.Query.bIgnoreCaster)
+	FDeliveryQueryHelpersV3::BuildQueryParams(Ctx, Spec.Query, Params);
+
+	const bool bLine =
+		(Spec.Shape.Kind == EDeliveryShapeV3::Ray) ||
+		(Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace);
+
+	// Line traces
+	if (bLine)
 	{
-		if (AActor* Caster = Ctx.GetCaster())
-		{
-			Params.AddIgnoredActor(Caster);
-		}
+		const bool bAny = FDeliveryQueryHelpersV3::LineTraceMulti(
+			World,
+			Spec.Query,
+			From,
+			To,
+			Params,
+			OutHits,
+			TEXT("Visibility"));
+
+		return bAny;
 	}
 
-	const FName Profile = Spec.Query.CollisionProfile.Name;
-	const bool bUseProfile = (Profile != NAME_None);
-
-
-
-	// Ray or LineTrace mode => line trace
-	if (Spec.Shape.Kind == EDeliveryShapeV3::Ray || Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace)
+	// Collision shapes (Sphere/Box/Capsule) for Sweep/Overlap
+	FCollisionShape CS;
+	const bool bHasCollisionShape = FDeliveryShapeHelpersV3::BuildCollisionShape(Spec.Shape, CS);
+	if (!bHasCollisionShape)
 	{
-		if (bUseProfile)
-		{
-			return World->LineTraceMultiByProfile(OutHits, From, To, Profile, Params);
-		}
-		return World->LineTraceMultiByChannel(OutHits, From, To, ECC_Visibility, Params);
-
+		return false;
 	}
 
-	const FCollisionShape CS = MakeCollisionShape(Spec.Shape);
-	const FQuat Rot = FQuat::Identity; // deterministic
-
-	// Overlap mode => overlap at destination
+	// Overlap at destination
 	if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
 	{
 		TArray<FOverlapResult> Overlaps;
-		bool bAny = false;
-		if (bUseProfile)
-		{
-			bAny = World->OverlapMultiByProfile(Overlaps, To, Rot, Profile, CS, Params);
-		}
-		else
-		{
-			// Overlap uses object types. Use a sane default that matches visibility-style queries:
-			// WorldStatic + WorldDynamic + Pawn is a good baseline.
-			FCollisionObjectQueryParams Obj;
-			Obj.AddObjectTypesToQuery(ECC_WorldStatic);
-			Obj.AddObjectTypesToQuery(ECC_WorldDynamic);
-			Obj.AddObjectTypesToQuery(ECC_Pawn);
-
-			bAny = World->OverlapMultiByObjectType(Overlaps, To, Rot, Obj, CS, Params);
-		}
+		const bool bAny = FDeliveryQueryHelpersV3::OverlapMulti(
+			World,
+			Spec.Query,
+			To,
+			FQuat::Identity,
+			CS,
+			Params,
+			Overlaps,
+			TEXT("OverlapAllDynamic"));
 
 		if (bAny)
 		{
@@ -165,31 +161,33 @@ bool UDeliveryDriver_MoverV3::SweepMoveAndCollectHits(
 			for (const FOverlapResult& O : Overlaps)
 			{
 				AActor* A = O.GetActor();
-				if (!A)
-				{
-					continue;
-				}
+				if (!A) continue;
 
 				FHitResult H;
-				// UE5: don't write H.Actor directly. Store actor via HitObjectHandle.
 				H.HitObjectHandle = FActorInstanceHandle(A);
 				H.Component = O.GetComponent();
 				H.Location = A->GetActorLocation();
 				H.ImpactPoint = H.Location;
-
 				OutHits.Add(H);
 			}
 		}
+
 		return bAny;
 	}
 
-	if (bUseProfile)
-	{
-		return World->SweepMultiByProfile(OutHits, From, To, Rot, Profile, CS, Params);
-	}
-	return World->SweepMultiByChannel(OutHits, From, To, Rot, ECC_Visibility, CS, Params);
-
+	// Sweep From->To
+	return FDeliveryQueryHelpersV3::SweepMulti(
+		World,
+		Spec.Query,
+		From,
+		To,
+		FQuat::Identity,
+		CS,
+		Params,
+		OutHits,
+		TEXT("Visibility"));
 }
+
 
 void UDeliveryDriver_MoverV3::DebugDraw(
 	const FSpellExecContextV3& Ctx,

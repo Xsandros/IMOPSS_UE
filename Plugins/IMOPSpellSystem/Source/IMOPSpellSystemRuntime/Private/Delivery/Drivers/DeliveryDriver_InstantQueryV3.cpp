@@ -3,6 +3,8 @@
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
 #include "Engine/EngineTypes.h" // FOverlapResult, FOverlapResult::GetActor/GetComponent
+#include "Delivery/Helpers/DeliveryQueryHelpersV3.h"
+#include "Delivery/Helpers/DeliveryShapeHelpersV3.h"
 
 
 #include "Runtime/SpellRuntimeV3.h"
@@ -98,101 +100,105 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 
 	const FVector From = PrimitiveCtx.FinalPoseWS.GetLocation();
 	const FVector Dir = PrimitiveCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
+
 	const float Range = FMath::Max(0.f, Q.Range);
 	const FVector To = From + Dir * Range;
-	const FDeliveryDebugDrawConfigV3 DebugCfg =
-		(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 
+	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 
-	// NEW: overlay debug (shape/id/kind at pose)
+	// Overlay debug
 	DebugDrawPrimitiveShape(World, Spec, PrimitiveCtx.FinalPoseWS, DebugCfg);
 	DebugDrawBeamLine(World, Spec, From, To, DebugCfg);
 
-	
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_InstantQuery), /*bTraceComplex*/ false);
-	if (Spec.Query.bIgnoreCaster)
-	{
-		if (AActor* Caster = Ctx.GetCaster())
-		{
-			Params.AddIgnoredActor(Caster);
-		}
-	}
-
-	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
-		? Spec.Query.CollisionProfile.Name
-		: FName(TEXT("Visibility")); // falls du wirklich Profile willst (ansonsten besser Channel)
-
+	FDeliveryQueryHelpersV3::BuildQueryParams(Ctx, Spec.Query, Params);
 
 	TArray<FHitResult> Hits;
 	bool bAny = false;
 
-	// Mode selection: Ray => LineTrace, otherwise Sweep/Overlap depending on spec
-	if (Spec.Shape.Kind == EDeliveryShapeV3::Ray || Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace)
+	// Determine query type:
+	// - If Ray OR explicit LineTrace mode => line trace.
+	// - Else: if Overlap => overlap at From
+	// - Else => sweep From->To with collision shape
+	const bool bLine =
+		(Spec.Shape.Kind == EDeliveryShapeV3::Ray) ||
+		(Spec.Query.Mode == EDeliveryQueryModeV3::LineTrace);
+
+	if (bLine)
 	{
-		if (Q.bMultiHit)
-		{
-			bAny = World->LineTraceMultiByProfile(Hits, From, To, Profile, Params);
-		}
-		else
-		{
-			FHitResult& One = Hits.AddDefaulted_GetRef();
-			bAny = World->LineTraceSingleByProfile(One, From, To, Profile, Params);
-			if (!bAny)
-			{
-				Hits.Reset();
-			}
-		}
+		bAny = FDeliveryQueryHelpersV3::LineTraceMulti(
+			World,
+			Spec.Query,
+			From,
+			To,
+			Params,
+			Hits,
+			TEXT("Visibility"));
 	}
 	else
 	{
 		FCollisionShape CS;
-		switch (Spec.Shape.Kind)
-		{
-		case EDeliveryShapeV3::Sphere:
-			CS = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius));
-			break;
-		case EDeliveryShapeV3::Capsule:
-			CS = FCollisionShape::MakeCapsule(FMath::Max(0.f, Spec.Shape.Radius), FMath::Max(0.f, Spec.Shape.HalfHeight));
-			break;
-		case EDeliveryShapeV3::Box:
-			CS = FCollisionShape::MakeBox(Spec.Shape.Extents);
-			break;
-		default:
-			CS = FCollisionShape::MakeSphere(0.f);
-			break;
-		}
+		const bool bHasCollisionShape = FDeliveryShapeHelpersV3::BuildCollisionShape(Spec.Shape, CS);
 
-		// Sweep along the line; if author asked Overlap, do a stationary overlap at From.
 		if (Spec.Query.Mode == EDeliveryQueryModeV3::Overlap)
 		{
 			TArray<FOverlapResult> Overlaps;
-			bAny = World->OverlapMultiByProfile(Overlaps, From, FQuat::Identity, Profile, CS, Params);
 
-			// For overlap mode: emit events directly from overlaps (no fake FHitResult required)
+			if (bHasCollisionShape)
+			{
+				bAny = FDeliveryQueryHelpersV3::OverlapMulti(
+					World,
+					Spec.Query,
+					From,
+					FQuat::Identity,
+					CS,
+					Params,
+					Overlaps,
+					TEXT("OverlapAllDynamic"));
+			}
+			else
+			{
+				// If author picked a non-collision shape for overlap, treat as "no results".
+				bAny = false;
+			}
+
+			// Convert overlaps -> minimal hit list (so downstream logic stays shared)
 			if (bAny)
 			{
+				Hits.Reserve(Overlaps.Num());
 				for (const FOverlapResult& O : Overlaps)
 				{
-					if (AActor* A = O.GetActor())
-					{
-						// Emit a minimal per-actor hit event (no impact point / normal)
-						// We reuse the existing downstream "write to target store" via Hits list:
-						FHitResult& HR = Hits.AddDefaulted_GetRef();
-						HR.Location = A->GetActorLocation();
-						HR.ImpactPoint = HR.Location;
+					AActor* A = O.GetActor();
+					if (!A) continue;
 
-						// Store actor/component in the officially supported fields:
-						// (We don't use SetActor/SetComponent because your build doesn't have them.)
-						HR.HitObjectHandle = FActorInstanceHandle(A);
-						HR.Component = O.GetComponent();
-					}
+					FHitResult& HR = Hits.AddDefaulted_GetRef();
+					HR.Location = A->GetActorLocation();
+					HR.ImpactPoint = HR.Location;
+					HR.HitObjectHandle = FActorInstanceHandle(A);
+					HR.Component = O.GetComponent();
 				}
 			}
 		}
-
 		else
 		{
-			bAny = World->SweepMultiByProfile(Hits, From, To, FQuat::Identity, Profile, CS, Params);
+			if (bHasCollisionShape)
+			{
+				bAny = FDeliveryQueryHelpersV3::SweepMulti(
+					World,
+					Spec.Query,
+					From,
+					To,
+					FQuat::Identity,
+					CS,
+					Params,
+					Hits,
+					TEXT("Visibility"));
+			}
+			else
+			{
+				// No usable collision shape -> nothing to do.
+				bAny = false;
+			}
 		}
 	}
 
@@ -201,7 +207,14 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 		SortHitsDeterministic(Hits, From);
 	}
 
-	// Cap hits
+	// MultiHit behavior:
+	// - If bMultiHit=false, still do multi trace (deterministic), but cap to 1.
+	// - Then cap to MaxHits.
+	if (!Q.bMultiHit && Hits.Num() > 1)
+	{
+		Hits.SetNum(1);
+	}
+
 	const int32 MaxHits = FMath::Max(1, Q.MaxHits);
 	if (Hits.Num() > MaxHits)
 	{
@@ -233,6 +246,7 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	if (OutSetName != NAME_None)
 	{
 		if (USpellTargetStoreV3* Store = Cast<USpellTargetStoreV3>(Ctx.TargetStore.Get()))
+
 		{
 			FTargetSetV3 Out;
 			for (const FHitResult& H : Hits)
@@ -252,9 +266,7 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 	{
 		EmitPrimitiveHit(Ctx, (float)Hits.Num(), nullptr, Spec.Events.ExtraTags);
 		UE_LOG(LogIMOPDeliveryInstantQueryV3, Display, TEXT("InstantQuery hits: %d (EmitHit=%d)"), Hits.Num(), Spec.Events.bEmitHit ? 1 : 0);
-
 	}
-
 
 	UE_LOG(LogIMOPDeliveryInstantQueryV3, Verbose, TEXT("InstantQuery: %s/%s hits=%d any=%d"),
 		*GroupHandle.DeliveryId.ToString(),
@@ -264,6 +276,7 @@ bool UDeliveryDriver_InstantQueryV3::EvaluateOnce(const FSpellExecContextV3& Ctx
 
 	return bAny;
 }
+
 
 void UDeliveryDriver_InstantQueryV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* Group, EDeliveryStopReasonV3 Reason)
 {

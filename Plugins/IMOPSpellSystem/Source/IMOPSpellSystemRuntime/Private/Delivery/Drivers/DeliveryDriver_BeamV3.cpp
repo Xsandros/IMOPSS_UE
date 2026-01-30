@@ -2,6 +2,8 @@
 
 #include "Delivery/Runtime/DeliveryGroupRuntimeV3.h"
 #include "Delivery/DeliverySpecV3.h"
+#include "Delivery/Helpers/DeliveryQueryHelpersV3.h"
+#include "Delivery/Helpers/DeliveryShapeHelpersV3.h"
 
 #include "Actions/SpellActionExecutorV3.h"
 #include "Stores/SpellTargetStoreV3.h"
@@ -127,9 +129,9 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	const FDeliveryBeamConfigV3& B = Spec.Beam;
 
 	const FVector Origin = LocalCtx.FinalPoseWS.GetLocation();
-
-	// Direction from pose; optionally lock on target
 	FVector Dir = LocalCtx.FinalPoseWS.GetRotation().GetForwardVector().GetSafeNormal();
+
+	// Optional lock-on
 	if (B.bLockOnTarget && B.LockTargetSet != NAME_None)
 	{
 		if (AActor* Target = PickLockTargetDeterministic(Ctx, B.LockTargetSet))
@@ -143,44 +145,50 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	}
 
 	const float Range = FMath::Max(0.f, B.Range);
-	const FVector End = Origin + Dir * Range;const FDeliveryDebugDrawConfigV3 DebugCfg =
-	(Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
+	const FVector End = Origin + Dir * Range;
 
+	const FDeliveryDebugDrawConfigV3 DebugCfg = (Spec.bOverrideDebugDraw ? Spec.DebugDrawOverride : Group->GroupSpec.DebugDrawDefaults);
 
-	// NEW: overlay debug (beam line + id/kind)
+	// Overlay
 	DebugDrawBeamLine(World, Spec, Origin, End, DebugCfg);
 
-	
-	// Collision profile
-	const FName Profile = (Spec.Query.CollisionProfile.Name != NAME_None)
-		? Spec.Query.CollisionProfile.Name
-		: FName(TEXT("Visibility")); // falls du wirklich Profile willst (ansonsten besser Channel)
-
-
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Beam), /*bTraceComplex*/ false);
-	if (Spec.Query.bIgnoreCaster)
-	{
-		if (AActor* Caster = Ctx.GetCaster())
-		{
-			Params.AddIgnoredActor(Caster);
-		}
-	}
+	FDeliveryQueryHelpersV3::BuildQueryParams(Ctx, Spec.Query, Params);
 
 	TArray<FHitResult> Hits;
 	bool bAny = false;
 
 	const float Radius = FMath::Max(0.f, B.Radius);
+
 	if (Radius <= 0.f)
 	{
-		bAny = World->LineTraceMultiByProfile(Hits, Origin, End, Profile, Params);
+		bAny = FDeliveryQueryHelpersV3::LineTraceMulti(
+			World,
+			Spec.Query,
+			Origin,
+			End,
+			Params,
+			Hits,
+			TEXT("Visibility"));
 	}
 	else
 	{
-		const FCollisionShape CS = FCollisionShape::MakeSphere(Radius);
-		bAny = World->SweepMultiByProfile(Hits, Origin, End, FQuat::Identity, Profile, CS, Params);
+		// Beam “thickness” => sweep with sphere
+		FCollisionShape CS = FCollisionShape::MakeSphere(Radius);
+
+		bAny = FDeliveryQueryHelpersV3::SweepMulti(
+			World,
+			Spec.Query,
+			Origin,
+			End,
+			FQuat::Identity,
+			CS,
+			Params,
+			Hits,
+			TEXT("Visibility"));
 	}
 
-	// Convert to unique actor set (ignore nulls)
+	// Unique actor set
 	TSet<TWeakObjectPtr<AActor>> NewInside;
 	for (const FHitResult& H : Hits)
 	{
@@ -221,6 +229,7 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 		{
 			TArray<AActor*> Actors;
 			Actors.Reserve(NewInside.Num());
+
 			for (const TWeakObjectPtr<AActor>& W : NewInside)
 			{
 				if (AActor* A = W.Get())
@@ -245,8 +254,7 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 		}
 	}
 
-	// ===== Events
-	// Enter/Exit computed by set difference
+	// ===== Events (enter/exit/stay/hit)
 	int32 EnterCount = 0;
 	for (const TWeakObjectPtr<AActor>& W : NewInside)
 	{
@@ -269,6 +277,7 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	{
 		EmitPrimitiveEnter(Ctx, Spec.Events.ExtraTags);
 	}
+
 	if (ExitCount > 0 && Spec.FieldEvents.bEmitExit)
 	{
 		EmitPrimitiveExit(Ctx, Spec.Events.ExtraTags);
@@ -280,6 +289,7 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 		{
 			EmitPrimitiveStay(Ctx, Spec.Events.ExtraTags);
 		}
+
 		if (Spec.Events.bEmitHit)
 		{
 			EmitPrimitiveHit(Ctx, (float)NewInside.Num(), nullptr, Spec.Events.ExtraTags);
@@ -287,10 +297,15 @@ void UDeliveryDriver_BeamV3::EvaluateBeam(const FSpellExecContextV3& Ctx, UDeliv
 	}
 
 	UE_LOG(LogIMOPDeliveryBeamV3, Verbose, TEXT("Beam Eval: %s/%s hits=%d inside=%d any=%d"),
-		*GroupHandle.DeliveryId.ToString(), *PrimitiveId.ToString(), Hits.Num(), NewInside.Num(), bAny ? 1 : 0);
+		*GroupHandle.DeliveryId.ToString(),
+		*PrimitiveId.ToString(),
+		Hits.Num(),
+		NewInside.Num(),
+		bAny ? 1 : 0);
 
 	InsideSet = MoveTemp(NewInside);
 }
+
 
 void UDeliveryDriver_BeamV3::Stop(const FSpellExecContextV3& Ctx, UDeliveryGroupRuntimeV3* /*Group*/, EDeliveryStopReasonV3 Reason)
 {

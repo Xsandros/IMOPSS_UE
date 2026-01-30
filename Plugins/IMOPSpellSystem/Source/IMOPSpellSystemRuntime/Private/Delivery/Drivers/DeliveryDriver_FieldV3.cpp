@@ -6,6 +6,8 @@
 #include "Actions/SpellActionExecutorV3.h"
 #include "Stores/SpellTargetStoreV3.h"
 #include "Targeting/TargetingTypesV3.h"
+#include "Delivery/Helpers/DeliveryQueryHelpersV3.h"
+#include "Delivery/Helpers/DeliveryShapeHelpersV3.h"
 
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -129,7 +131,9 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 	DebugDrawPrimitiveShape(World, Spec, LocalCtx.FinalPoseWS, DebugCfg);
 	
 	// Collision profile
-	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), /*bTraceComplex*/ false);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(IMOP_Delivery_Field), false);
+	FDeliveryQueryHelpersV3::BuildQueryParams(Ctx, Spec.Query, Params);
+
 	if (Spec.Query.bIgnoreCaster)
 	{
 		if (AActor* Caster = Ctx.GetCaster())
@@ -139,30 +143,24 @@ void UDeliveryDriver_FieldV3::Evaluate(const FSpellExecContextV3& Ctx, UDelivery
 	}
 
 	FCollisionShape Shape;
-	switch (Spec.Shape.Kind)
+	if (!FDeliveryShapeHelpersV3::BuildCollisionShape(Spec.Shape, Shape))
 	{
-		case EDeliveryShapeV3::Sphere:
-			Shape = FCollisionShape::MakeSphere(FMath::Max(0.f, Spec.Shape.Radius));
-			break;
-	case EDeliveryShapeV3::Capsule:
-		Shape = FCollisionShape::MakeCapsule(
-			FMath::Max(0.f, Spec.Shape.CapsuleRadius),
-			FMath::Max(0.f, Spec.Shape.HalfHeight)
-		);
-		break;
-
-		case EDeliveryShapeV3::Box:
-			Shape = FCollisionShape::MakeBox(Spec.Shape.Extents);
-			break;
-		default:
-			// Fallback: sphere radius 100
-			Shape = FCollisionShape::MakeSphere(100.f);
-			break;
+		// Ray etc not valid for Field overlaps
+		return;
 	}
 
-	TArray<FOverlapResult> Overlaps;
-	bool bAny = false;
 
+	TArray<FOverlapResult> Overlaps;
+	bool bAny = FDeliveryQueryHelpersV3::OverlapMulti(
+		World,
+		Spec.Query,
+		Center,
+		FQuat::Identity,
+		Shape,
+		Params,
+		Overlaps,
+		TEXT("OverlapAllDynamic"));
+	
 	switch (Spec.Query.FilterMode)
 	{
 	case EDeliveryQueryFilterModeV3::ByChannel:

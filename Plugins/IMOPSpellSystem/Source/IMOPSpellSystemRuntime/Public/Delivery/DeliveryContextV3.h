@@ -63,4 +63,12 @@ struct FDeliveryContextV3
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Ctx")
 	FTransform FinalPoseWS = FTransform::Identity;
+	
+	// --- Anchor freeze cache (runtime only) ---
+	UPROPERTY(Transient)
+	bool bAnchorFrozenWS = false;
+
+	UPROPERTY(Transient)
+	FTransform FrozenAnchorWS = FTransform::Identity;
+
 };

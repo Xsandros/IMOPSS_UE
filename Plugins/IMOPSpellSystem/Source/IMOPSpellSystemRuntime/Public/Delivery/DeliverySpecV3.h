@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameplayTagContainer.h"
 #include "Delivery/Motion/DeliveryMotionTypesV3.h"
+#include "Engine/EngineTypes.h" // FCollisionProfileName, ECollisionChannel, FCollisionQueryParams
 
 #include "Delivery/DeliveryTypesV3.h"
 
@@ -88,6 +89,38 @@ struct FDeliveryAnchorRefV3
 
 
 };
+
+USTRUCT(BlueprintType)
+struct FDeliveryQuerySpecV3
+{
+	GENERATED_BODY()
+
+	// What kind of world query to perform (Overlap / Sweep / LineTrace)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
+	EDeliveryQueryModeV3 Mode = EDeliveryQueryModeV3::Sweep;
+
+	// How to select collision filtering (Channel / ObjectTypes / Profile)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
+	EDeliveryQueryFilterModeV3 FilterMode = EDeliveryQueryFilterModeV3::ByChannel;
+
+	// Used when FilterMode == ByChannel
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query", meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByChannel"))
+	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
+
+	// Used when FilterMode == ByObjectType
+	// NOTE: We store as collision channels because UE object types map to collision channels.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query", meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByObjectType"))
+	TArray<TEnumAsByte<ECollisionChannel>> ObjectTypes;
+
+	// Used when FilterMode == ByProfile
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query", meta=(EditCondition="FilterMode==EDeliveryQueryFilterModeV3::ByProfile"))
+	FCollisionProfileName CollisionProfile;
+
+	// Common flags
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Delivery|Query")
+	bool bIgnoreCaster = true;
+};
+
 
 // ============================================================
 // Blackboard ownership (Write & Owner Matrix)

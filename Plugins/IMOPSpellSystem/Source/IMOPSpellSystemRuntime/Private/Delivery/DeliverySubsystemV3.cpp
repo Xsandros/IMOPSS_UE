@@ -1307,6 +1307,28 @@ void UDeliverySubsystemV3::ResolveAllPrimitivePoses(
                 }
             }
 
+        	// Apply FollowMode semantics (FreezeOnPlace)
+        	if (PCtx->Spec.Anchor.FollowMode == EDeliveryAnchorFollowModeV3::FreezeOnPlace)
+        	{
+        		// Only freeze once we have a resolved anchor (or a chosen fallback)
+        		if (!PCtx->bAnchorFrozenWS)
+        		{
+        			PCtx->bAnchorFrozenWS = true;
+        			PCtx->FrozenAnchorWS = AnchorWS;
+        		}
+        		else
+        		{
+        			AnchorWS = PCtx->FrozenAnchorWS;
+        		}
+        	}
+        	else
+        	{
+        		// Not freezing: keep updating anchor each eval
+        		PCtx->bAnchorFrozenWS = false;
+        		PCtx->FrozenAnchorWS = FTransform::Identity;
+        	}
+
+        	
         	const FDeliveryAnchorRefV3& A = PCtx->Spec.Anchor;
         	const FTransform LocalXf(FQuat(A.LocalRotation), A.LocalOffset, A.LocalScale);
 
